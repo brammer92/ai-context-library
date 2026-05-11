@@ -182,8 +182,8 @@ writes.
 /plugin install /path/to/ai-context-library
 
 # Option B — install from a GitHub marketplace.
-/plugin marketplace add https://github.com/brammer92/ai-context-library
-/plugin install ai-context-library@library
+/plugin marketplace add brammer92/ai-context-library
+/plugin install library@ai-context-library
 ```
 
 Then set the library path (in your shell rc):

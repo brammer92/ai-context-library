@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+secrets/
+private/
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.DS_Store

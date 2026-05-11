@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bram/ai-context-library/schemas/memory.schema.json",
+  "title": "Memory",
+  "description": "Schema for a single memory file in the AI context library. Persisted as a Markdown file with YAML frontmatter; this schema describes the frontmatter and a derived 'content' field (the Markdown body).",
+  "type": "object",
+  "required": [
+    "id",
+    "title",
+    "type",
+    "scope",
+    "agent_scope",
+    "tags",
+    "importance",
+    "created_at",
+    "updated_at",
+    "source",
+    "content"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^mem_[a-z0-9_]+$",
+      "description": "Lowercase snake_case identifier, must start with 'mem_'."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "user_preference",
+        "agent_instruction",
+        "project_context",
+        "decision",
+        "fact",
+        "workflow",
+        "security_note",
+        "troubleshooting_note"
+      ]
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["global", "agent", "project", "private"]
+    },
+    "agent_scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "List of agent identifiers (or '*' for all agents) that this memory applies to."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      },
+      "description": "Lowercase kebab-case tags."
+    },
+    "importance": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "critical"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Where this memory originated (e.g. 'claude-code', 'chatgpt', 'manual')."
+    },
+    "content": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Durable, reusable content body. Not a transcript fragment."
+    }
+  }
+}

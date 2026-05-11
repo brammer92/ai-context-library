@@ -1,0 +1,54 @@
+{
+  "name": "library",
+  "description": "Safely write validated memories, reusable skills, and durable context into a private GitHub-based AI context library shared across Claude Code, Claude web UI, and ChatGPT.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Bram Verschuren"
+  },
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "skills",
+    "ai-context",
+    "github",
+    "claude-code"
+  ],
+  "userConfig": {
+    "context_library_path": {
+      "type": "directory",
+      "title": "Context Library Path",
+      "description": "Absolute path to the local AI context library (the ai-context-hub repo). Falls back to $AI_CONTEXT_LIBRARY_PATH or cwd.",
+      "required": false
+    },
+    "default_agent_scope": {
+      "type": "string",
+      "title": "Default Agent Scope",
+      "description": "Default agent_scope tag written to new memories/skills. Default: *",
+      "required": false
+    },
+    "default_source": {
+      "type": "string",
+      "title": "Default Source",
+      "description": "Default source attribution written to new memories. Default: claude-code",
+      "required": false
+    },
+    "require_review": {
+      "type": "boolean",
+      "title": "Require Review",
+      "description": "Refuse to commit unless /library:review has been run. Default: true",
+      "required": false
+    },
+    "allow_auto_commit": {
+      "type": "boolean",
+      "title": "Allow Auto Commit",
+      "description": "Permit /library:commit without /library:review. Default: false",
+      "required": false
+    },
+    "allow_push": {
+      "type": "boolean",
+      "title": "Allow Push",
+      "description": "Permit any push operations. Default: false. The plugin never pushes regardless.",
+      "required": false
+    }
+  }
+}

@@ -1,0 +1,369 @@
+"""Shared helpers for the AI Context Library plugin.
+
+This module provides:
+  - Constants for memory/skill enumerations and folder mappings.
+  - A small stdlib-only YAML frontmatter parser/dumper (flat scalars and
+    block-style lists only).
+  - Slug/ID/timestamp helpers and a "useful content" heuristic used to
+    reject obvious transcript fragments from being saved as memories.
+  - Path-safety checks for the allowed context-library subtree.
+
+Python 3.11+. No external dependencies.
+"""
+from __future__ import annotations
+
+import os
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+ALLOWED_LIBRARY_DIRS: tuple[str, ...] = (
+    "context",
+    "memories",
+    "skills",
+    "projects",
+    "prompts",
+    "templates",
+    "schemas",
+    # Karpathy LLM Wiki — Layer 1, raw immutable source documents.
+    "sources",
+)
+
+ALLOWED_LIBRARY_ROOT_FILES: tuple[str, ...] = (
+    "README.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "CHATGPT.md",
+    # Hermes harness — bounded "active context" files at the library root.
+    "MEMORY.md",
+    "USER.md",
+    "CONSTRAINTS.md",
+    # Karpathy LLM Wiki — auto-maintained content catalog and chronological log.
+    "index.md",
+    "log.md",
+)
+
+
+# Hermes harness character caps for the bounded root files. The small
+# numbers are deliberate: they force consolidation rather than junk
+# accumulation. Caps apply to the Markdown body (frontmatter excluded).
+HERMES_CAPS: dict[str, int] = {
+    "MEMORY.md": 2200,
+    "USER.md": 1375,
+    "CONSTRAINTS.md": 4000,
+}
+
+MEMORY_TYPES: set[str] = {
+    "user_preference",
+    "agent_instruction",
+    "project_context",
+    "decision",
+    "fact",
+    "workflow",
+    "security_note",
+    "troubleshooting_note",
+}
+
+MEMORY_TYPE_TO_FOLDER: dict[str, str] = {
+    "user_preference": "memories/user",
+    "agent_instruction": "memories/agents",
+    "project_context": "memories/projects",
+    "decision": "memories/decisions",
+    "workflow": "memories/workflows",
+    "security_note": "memories/security",
+    "troubleshooting_note": "memories/troubleshooting",
+    "fact": "memories/user",
+}
+
+MEMORY_SCOPES: set[str] = {"global", "agent", "project", "private"}
+IMPORTANCE_VALUES: set[str] = {"low", "medium", "high", "critical"}
+SKILL_STATUSES: set[str] = {"draft", "active", "deprecated"}
+RISK_LEVELS: set[str] = {"low", "medium", "high"}
+
+SKILL_REQUIRED_SECTIONS: list[str] = [
+    "## Purpose",
+    "## When To Use",
+    "## Inputs Expected",
+    "## Procedure",
+    "## Output Format",
+    "## Safety Checks",
+    "## Failure Modes",
+]
+
+_SNAKE_CASE_RE = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)*$")
+_KEBAB_CASE_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+_SLUG_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
+_FILLER_PREFIX_RE = re.compile(
+    r"^(maybe|todo|tbd|temporary|we discussed|let's|note:|fix this later)",
+    re.IGNORECASE,
+)
+
+
+def resolve_library_path(explicit: str | None = None) -> Path:
+    """Resolve the context library root.
+
+    Priority: explicit argument > $AI_CONTEXT_LIBRARY_PATH > current working
+    directory. Raises FileNotFoundError if the resolved path does not exist
+    or is not a directory.
+    """
+    candidate: str | None = explicit or os.environ.get("AI_CONTEXT_LIBRARY_PATH")
+    path = Path(candidate).expanduser().resolve() if candidate else Path.cwd().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Context library path does not exist: {path}")
+    if not path.is_dir():
+        raise NotADirectoryError(f"Context library path is not a directory: {path}")
+    return path
+
+
+def parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Parse YAML frontmatter from a markdown string.
+
+    Returns (metadata, body). If the text has no `---` block at the top,
+    returns ({}, original_text). Raises ValueError on an unterminated block.
+
+    Supported subset:
+      - Flat scalar entries:    key: value
+      - Quoted scalars:         key: "value with: colons"
+      - Block-style lists:      key:\n  - item1\n  - item2
+      - Comments outside quoted strings (lines starting with '#').
+
+    Inline lists ([a, b]), nested mappings, and anchors are NOT supported.
+    """
+    if not text.startswith("---"):
+        return {}, text
+
+    lines = text.splitlines(keepends=False)
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+
+    end_index = -1
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_index = i
+            break
+    if end_index == -1:
+        raise ValueError("Unterminated YAML frontmatter (missing closing '---').")
+
+    meta: dict = {}
+    current_list_key: str | None = None
+    for raw in lines[1:end_index]:
+        stripped = raw.rstrip("\n")
+        if not stripped.strip():
+            continue
+        # Comments (outside quotes) — simple heuristic: any unquoted '# ' starts a comment.
+        # We only strip whole-line comments to keep behaviour predictable.
+        if stripped.lstrip().startswith("#"):
+            continue
+
+        # List item continuation?
+        list_match = re.match(r"^(\s+)-\s+(.*)$", stripped)
+        if list_match and current_list_key is not None:
+            value = _unwrap_scalar(list_match.group(2).strip())
+            meta[current_list_key].append(value)
+            continue
+
+        # New key.
+        kv_match = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$", stripped)
+        if not kv_match:
+            # Not parseable; skip silently to keep parser forgiving.
+            continue
+        key = kv_match.group(1)
+        rest = kv_match.group(2).strip()
+        if rest == "":
+            # Start of a block list (next lines should be `  - x`).
+            meta[key] = []
+            current_list_key = key
+        else:
+            meta[key] = _unwrap_scalar(rest)
+            current_list_key = None
+
+    body = "\n".join(lines[end_index + 1 :])
+    # Strip a single leading blank line if present.
+    if body.startswith("\n"):
+        body = body[1:]
+    # Preserve the original trailing newline (splitlines drops it).
+    if text.endswith("\n") and not body.endswith("\n"):
+        body += "\n"
+    return meta, body
+
+
+def _unwrap_scalar(s: str) -> str | bool | int:
+    """Strip matching outer quotes and coerce simple primitives."""
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'"):
+        return s[1:-1]
+    lower = s.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    if re.fullmatch(r"-?\d+", s):
+        return int(s)
+    return s
+
+
+def dump_frontmatter(meta: dict, body: str) -> str:
+    """Serialize metadata + body back to a markdown string.
+
+    Output is deterministic for the keys provided in `meta` (preserves
+    insertion order). Lists are emitted in block style. ISO strings, names
+    containing colons, and other ambiguous scalars are double-quoted.
+    """
+    lines: list[str] = ["---"]
+    for key, value in meta.items():
+        if isinstance(value, list):
+            lines.append(f"{key}:")
+            for item in value:
+                lines.append(f"  - {_emit_scalar(item)}")
+        else:
+            lines.append(f"{key}: {_emit_scalar(value)}")
+    lines.append("---")
+    if body and not body.startswith("\n"):
+        lines.append("")
+    return "\n".join(lines) + ("\n" + body if body else "\n")
+
+
+def _emit_scalar(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    s = str(value)
+    # Quote if it contains characters that would otherwise be ambiguous.
+    needs_quoting = bool(re.search(r"[:#\"'\n]|^[ \t]|[ \t]$|^[*&?\-]|^\d{4}-\d{2}-\d{2}", s))
+    if needs_quoting:
+        escaped = s.replace('"', '\\"')
+        return f'"{escaped}"'
+    return s
+
+
+def slugify(text: str) -> str:
+    """Lowercase, replace non-[a-z0-9] runs with '-', strip leading/trailing '-'."""
+    s = text.strip().lower()
+    s = _SLUG_NORMALIZE_RE.sub("-", s)
+    return s.strip("-")
+
+
+def is_snake_case(s: str) -> bool:
+    return bool(_SNAKE_CASE_RE.fullmatch(s or ""))
+
+
+def is_kebab_case(s: str) -> bool:
+    return bool(_KEBAB_CASE_RE.fullmatch(s or ""))
+
+
+def is_iso8601(s: str) -> bool:
+    if not isinstance(s, str) or not s:
+        return False
+    try:
+        datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def is_semver(s: str) -> bool:
+    return bool(_SEMVER_RE.fullmatch(s or ""))
+
+
+def now_iso() -> str:
+    """Return current UTC time as ISO-8601 with seconds precision and Z suffix."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def generate_memory_id(title: str, ts: datetime) -> str:
+    slug = slugify(title).replace("-", "_")
+    if not slug:
+        slug = "untitled"
+    return f"mem_{ts.strftime('%Y%m%d')}_{slug}"
+
+
+def generate_skill_id(name: str) -> str:
+    slug = slugify(name).replace("-", "_")
+    if not slug:
+        slug = "untitled"
+    return f"skill_{slug}"
+
+
+def is_under_allowed_library_path(rel_path: Path) -> bool:
+    """Return True iff rel_path is under one of the allowed library subtrees.
+
+    Rejects paths containing '..' segments. Accepts either a top-level
+    allowed file (e.g. CLAUDE.md) or any path whose first component is in
+    ALLOWED_LIBRARY_DIRS.
+    """
+    parts = rel_path.parts
+    if not parts:
+        return False
+    if ".." in parts:
+        return False
+    if rel_path.is_absolute():
+        return False
+    if len(parts) == 1 and parts[0] in ALLOWED_LIBRARY_ROOT_FILES:
+        return True
+    return parts[0] in ALLOWED_LIBRARY_DIRS
+
+
+def useful_content_heuristic(body: str) -> tuple[bool, str]:
+    """Reject obvious transcript fragments or stub content.
+
+    Returns (ok, reason). If ok is True, reason is "". If ok is False,
+    reason explains why.
+    """
+    if body is None:
+        return False, "content is missing"
+    stripped = body.strip()
+    if not stripped:
+        return False, "content is empty"
+    # Trim markdown heading characters when measuring length.
+    measurable = re.sub(r"^#+\s*", "", stripped, flags=re.MULTILINE)
+    measurable = measurable.strip()
+    if len(measurable) < 40:
+        return False, f"content is too short ({len(measurable)} chars; need >= 40)"
+    if _FILLER_PREFIX_RE.search(measurable):
+        return False, "content looks like a transcript fragment or todo note"
+    # Reject content with no alphabetic characters (e.g. only punctuation).
+    if not re.search(r"[A-Za-z]{3,}", measurable):
+        return False, "content has no meaningful words"
+    return True, ""
+
+
+def body_char_count(text: str) -> int:
+    """Return the length of the Markdown body, frontmatter excluded.
+
+    Used by the Hermes harness to enforce caps on bounded root files.
+    """
+    try:
+        _meta, body = parse_frontmatter(text)
+    except ValueError:
+        body = text
+    return len(body)
+
+
+__all__ = [
+    "ALLOWED_LIBRARY_DIRS",
+    "ALLOWED_LIBRARY_ROOT_FILES",
+    "HERMES_CAPS",
+    "MEMORY_TYPES",
+    "MEMORY_TYPE_TO_FOLDER",
+    "MEMORY_SCOPES",
+    "IMPORTANCE_VALUES",
+    "SKILL_STATUSES",
+    "RISK_LEVELS",
+    "SKILL_REQUIRED_SECTIONS",
+    "resolve_library_path",
+    "parse_frontmatter",
+    "dump_frontmatter",
+    "slugify",
+    "is_snake_case",
+    "is_kebab_case",
+    "is_iso8601",
+    "is_semver",
+    "now_iso",
+    "generate_memory_id",
+    "generate_skill_id",
+    "is_under_allowed_library_path",
+    "useful_content_heuristic",
+    "body_char_count",
+]

@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bram/ai-context-library/schemas/skill.schema.json",
+  "title": "Skill",
+  "description": "Schema for a reusable skill in the AI context library. Persisted as a folder with a SKILL.md, plus optional examples.md and validation.md. This schema describes the frontmatter and a derived 'instructions' field (the Markdown body).",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version",
+    "description",
+    "status",
+    "tags",
+    "agent_scope",
+    "risk_level",
+    "created_at",
+    "updated_at",
+    "instructions"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^skill_[a-z0-9_]+$",
+      "description": "Lowercase snake_case identifier, must start with 'skill_'."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "active", "deprecated"]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+      }
+    },
+    "agent_scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "instructions": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Skill body in Markdown, containing required sections: Purpose, When To Use, Inputs Expected, Procedure, Output Format, Safety Checks, Failure Modes."
+    }
+  }
+}

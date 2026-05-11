@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Generate a structured memory file under the AI context library.
+
+Writes to <library>/<MEMORY_TYPE_TO_FOLDER[type]>/<mem_id>.md, then runs
+the memory validator and the secret scanner on the result. If either
+fails, the file is deleted and the script exits non-zero.
+
+Exit codes:
+    0  success (file created and validated)
+    1  validation or secret-scan failure
+    2  bad invocation
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+import common
+import scan_secrets
+import validate_memory
+
+
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _title_from_content(content: str) -> str:
+    """Take first 6 words as title."""
+    words = content.strip().split()
+    if not words:
+        return "Untitled"
+    return " ".join(words[:6]).rstrip(".,;:!?")
+
+
+def build_memory(
+    *,
+    content: str,
+    mtype: str,
+    title: str | None,
+    scope: str,
+    agent_scope: list[str],
+    tags: list[str],
+    importance: str,
+    source: str,
+    now: datetime | None = None,
+) -> tuple[dict, str, str]:
+    """Return (frontmatter_dict, body, target_relative_path)."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    ts = common.now_iso() if now is None else now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    actual_title = (title or _title_from_content(content)).strip()
+    mem_id = common.generate_memory_id(actual_title, now)
+    folder = common.MEMORY_TYPE_TO_FOLDER[mtype]
+    body = f"# {actual_title}\n\n{content.strip()}\n"
+    meta = {
+        "id": mem_id,
+        "title": actual_title,
+        "type": mtype,
+        "scope": scope,
+        "agent_scope": agent_scope,
+        "tags": tags,
+        "importance": importance,
+        "created_at": ts,
+        "updated_at": ts,
+        "source": source,
+    }
+    rel = f"{folder}/{mem_id}.md"
+    return meta, body, rel
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Create a memory file.")
+    parser.add_argument("--content", required=True, help="Memory content (durable, specific).")
+    parser.add_argument("--title", default=None, help="Optional title; derived from content if absent.")
+    parser.add_argument("--type", dest="mtype", required=True, choices=sorted(common.MEMORY_TYPES))
+    parser.add_argument("--scope", default="global", choices=sorted(common.MEMORY_SCOPES))
+    parser.add_argument("--agent-scope", default=None, help="Comma-separated. Defaults to '*' or $AI_CONTEXT_LIBRARY_DEFAULT_AGENT_SCOPE.")
+    parser.add_argument("--tags", default="", help="Comma-separated kebab-case tags.")
+    parser.add_argument("--importance", default="medium", choices=sorted(common.IMPORTANCE_VALUES))
+    parser.add_argument("--source", default=None, help="Defaults to 'claude-code' or $AI_CONTEXT_LIBRARY_DEFAULT_SOURCE.")
+    parser.add_argument("--library", default=None, help="Library root. Defaults to $AI_CONTEXT_LIBRARY_PATH or cwd.")
+    parser.add_argument("--force", action="store_true", help="Overwrite if target file exists.")
+    parser.add_argument("--dry-run", action="store_true", help="Print the would-be file content and exit.")
+    args = parser.parse_args(argv)
+
+    agent_scope_csv = args.agent_scope or os.environ.get("AI_CONTEXT_LIBRARY_DEFAULT_AGENT_SCOPE") or "*"
+    agent_scope = _split_csv(agent_scope_csv) or ["*"]
+    tags = _split_csv(args.tags)
+    source = args.source or os.environ.get("AI_CONTEXT_LIBRARY_DEFAULT_SOURCE") or "claude-code"
+
+    try:
+        library = common.resolve_library_path(args.library)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    meta, body, rel = build_memory(
+        content=args.content,
+        mtype=args.mtype,
+        title=args.title,
+        scope=args.scope,
+        agent_scope=agent_scope,
+        tags=tags,
+        importance=args.importance,
+        source=source,
+    )
+
+    serialized = common.dump_frontmatter(meta, body)
+
+    if args.dry_run:
+        print(f"# would write to: {library / rel}\n")
+        print(serialized)
+        return 0
+
+    target = library / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if target.exists() and not args.force:
+        print(f"error: refusing to overwrite existing file: {target}", file=sys.stderr)
+        return 1
+
+    target.write_text(serialized, encoding="utf-8")
+
+    # Validate the just-written file.
+    val_errors = validate_memory.validate(target)
+    if val_errors:
+        print(f"INVALID generated memory at {target}:", file=sys.stderr)
+        for e in val_errors:
+            print(f"  - {e}", file=sys.stderr)
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        return 1
+
+    # Scan for secrets.
+    if scan_secrets.main([str(target)]) != 0:
+        print(
+            f"error: secret findings in generated memory; removing {target}",
+            file=sys.stderr,
+        )
+        try:
+            target.unlink()
+        except OSError:
+            pass
+        return 1
+
+    print(f"created: {target}")
+    print("next: review changes with /library:review, then commit with /library:commit")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.exit(main())

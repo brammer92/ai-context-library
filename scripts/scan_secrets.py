@@ -49,19 +49,41 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "vendor_env_token",
         re.compile(
-            r"(?i)\b(OPENAI|ANTHROPIC|GITHUB|GITLAB|NPM|AZURE|GOOGLE)_"
-            r"(API_)?(TOKEN|KEY|SECRET)\s*[:=]\s*['\"]?\S+",
+            r"(?i)\b(?P<vendor>OPENAI|ANTHROPIC|GITHUB|GITLAB|NPM|AZURE|GOOGLE)_"
+            r"(?:API_)?(?P<kind>TOKEN|KEY|SECRET)\s*[:=]\s*"
+            r"(?P<value>['\"]?\S+)",
         ),
     ),
     (
         "generic_credential",
         re.compile(
-            r"(?i)\b(password|passwd|secret|token|api[_-]?key|apikey)\s*[:=]\s*"
-            r"['\"]?[^\s'\"#]{6,}",
+            r"(?i)\b(?P<label>password|passwd|secret|token|api[_-]?key|apikey)"
+            r"\s*[:=]\s*(?P<value>['\"]?[^\s'\"#]{6,})",
         ),
     ),
     ("pem_private_key", re.compile(r"-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----")),
 ]
+
+
+# Patterns whose `value` named group should be checked against
+# _ENV_VAR_REF_RE; matches starting with an env-var reference are
+# documentation, not real credentials, and are suppressed.
+_ENV_VAR_REF_SUPPRESSED: frozenset[str] = frozenset({"generic_credential", "vendor_env_token"})
+
+# Recognises common ways a documentation snippet references an environment
+# variable rather than embedding a real secret. Matched against the *value*
+# portion of a credential assignment; if the value starts with one of these
+# forms, the finding is suppressed.
+_ENV_VAR_REF_RE = re.compile(
+    r"""^\s*['"]?(?:
+        \$\{?[A-Za-z_][A-Za-z0-9_]*\}?         # $VAR or ${VAR}
+        | process\.env\.[A-Za-z_][A-Za-z0-9_]* # process.env.VAR
+        | os\.environ(?:\[|\.get\()            # os.environ['X'] or os.environ.get('X')
+        | os\.getenv\(                         # os.getenv('X')
+        | %[A-Za-z_][A-Za-z0-9_]*%             # %VAR% (Windows cmd)
+    )""",
+    re.VERBOSE,
+)
 
 
 def redact(s: str) -> str:
@@ -126,6 +148,10 @@ def scan_file(path: Path) -> list[tuple[Path, int, str, str]]:
             for lineno, line in enumerate(f, start=1):
                 for name, regex in PATTERNS:
                     for match in regex.finditer(line):
+                        if name in _ENV_VAR_REF_SUPPRESSED:
+                            value = match.groupdict().get("value") or ""
+                            if _ENV_VAR_REF_RE.match(value):
+                                continue
                         findings.append((path, lineno, name, redact(match.group(0))))
     except OSError as exc:
         print(f"warning: could not read {path}: {exc}", file=sys.stderr)

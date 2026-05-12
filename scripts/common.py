@@ -73,7 +73,7 @@ MEMORY_TYPE_TO_FOLDER: dict[str, str] = {
     "workflow": "memories/workflows",
     "security_note": "memories/security",
     "troubleshooting_note": "memories/troubleshooting",
-    "fact": "memories/user",
+    "fact": "memories/facts",
 }
 
 MEMORY_SCOPES: set[str] = {"global", "agent", "project", "private"}

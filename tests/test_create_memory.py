@@ -43,15 +43,18 @@ class TestCreateMemory(unittest.TestCase):
         self.assertEqual(len(files), 1)
         self.assertTrue(files[0].name.startswith("mem_"))
 
-    def test_fact_routed_to_user_folder(self):
+    def test_fact_routed_to_facts_folder(self):
         rc, _, err = run([
-            "--content", "The user uses Ubuntu 24.04 LTS on their primary workstation.",
+            "--content", "FortiGate syslog stack v1 lives at 10.1.40.11-13 on VLAN 40.",
             "--type", "fact",
             "--library", str(self.lib),
         ])
         self.assertEqual(rc, 0, msg=err)
-        files = list((self.lib / "memories" / "user").glob("*.md"))
+        files = list((self.lib / "memories" / "facts").glob("*.md"))
         self.assertEqual(len(files), 1)
+        # And nothing landed in memories/user/ (which is reserved for
+        # type=user_preference).
+        self.assertEqual(list((self.lib / "memories" / "user").glob("*.md")), [])
 
     def test_refuses_overwrite(self):
         args = [
@@ -109,6 +112,19 @@ class TestCreateMemory(unittest.TestCase):
         self.assertEqual(rc, 0)
         files = list((self.lib / "memories" / "user").glob("*.md"))
         self.assertRegex(files[0].name, r"^mem_\d{8}_[a-z0-9_]+\.md$")
+
+    def test_secret_in_title_blocks_creation_before_disk_write(self):
+        """An AWS access-key id in the title must abort before any slug
+        is derived; no file may hit disk under the library tree."""
+        rc, _, err = run([
+            "--content", "Durable content about a credential rotation pass.",
+            "--title", "Rotate AKIAIOSFODNN7EXAMPLE soon",
+            "--type", "security_note",
+            "--library", str(self.lib),
+        ])
+        self.assertEqual(rc, 1, msg=err)
+        self.assertEqual(list(self.lib.rglob("*.md")), [])
+        self.assertIn("credential-shaped token", err)
 
 
 if __name__ == "__main__":

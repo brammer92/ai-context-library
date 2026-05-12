@@ -37,6 +37,25 @@ def _title_from_content(content: str) -> str:
     return " ".join(words[:6]).rstrip(".,;:!?")
 
 
+def _has_secret_pattern(text: str) -> tuple[bool, str | None]:
+    """Pre-scan combined title+content for credential-shaped tokens.
+
+    Reuses scan_secrets.PATTERNS and the env-var-ref suppression rules so
+    the in-process pre-check and the post-write file scan stay in sync.
+    Prevents a slug derived from a secret from briefly hitting disk.
+    """
+    for name, regex in scan_secrets.PATTERNS:
+        m = regex.search(text)
+        if not m:
+            continue
+        if name in scan_secrets._ENV_VAR_REF_SUPPRESSED:
+            value = m.groupdict().get("value") or ""
+            if scan_secrets._ENV_VAR_REF_RE.match(value):
+                continue
+        return True, name
+    return False, None
+
+
 def build_memory(
     *,
     content: str,
@@ -87,6 +106,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="Overwrite if target file exists.")
     parser.add_argument("--dry-run", action="store_true", help="Print the would-be file content and exit.")
     args = parser.parse_args(argv)
+
+    combined = f"{args.title or ''}\n{args.content or ''}"
+    found, pattern = _has_secret_pattern(combined)
+    if found:
+        print(
+            f"error: refusing to write memory - content contains a "
+            f"credential-shaped token (pattern: {pattern}). Remove or "
+            f"redact before retrying.",
+            file=sys.stderr,
+        )
+        return 1
 
     agent_scope_csv = args.agent_scope or os.environ.get("AI_CONTEXT_LIBRARY_DEFAULT_AGENT_SCOPE") or "*"
     agent_scope = _split_csv(agent_scope_csv) or ["*"]

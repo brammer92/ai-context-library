@@ -106,6 +106,33 @@ class TestScanSecrets(unittest.TestCase):
         self.assertIn("ghp", out)
         self.assertIn("abcd", out)
 
+    def test_env_var_assignment_dollar_not_flagged(self):
+        self.write("doc.md", "token = $GITHUB_TOKEN\n")
+        rc, out = run_scan(self.root)
+        self.assertEqual(rc, 0, msg=out)
+
+    def test_env_var_assignment_braced_not_flagged(self):
+        self.write("doc.md", "secret = ${API_KEY}\n")
+        rc, out = run_scan(self.root)
+        self.assertEqual(rc, 0, msg=out)
+
+    def test_process_env_reference_not_flagged(self):
+        self.write("doc.md", "key = process.env.OPENAI_KEY\n")
+        rc, out = run_scan(self.root)
+        self.assertEqual(rc, 0, msg=out)
+
+    def test_real_aws_secret_still_blocked(self):
+        self.write(
+            "doc.md",
+            "aws_secret_access_key = AKIAIOSFODNN7EXAMPLEABCDEFGHIJKLMNOPQRSTUV\n",
+        )
+        rc, out = run_scan(self.root)
+        self.assertEqual(rc, 1)
+        self.assertTrue(
+            "aws_access_key_id" in out or "aws_secret_access_key" in out,
+            msg=f"expected AWS pattern in output, got: {out}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

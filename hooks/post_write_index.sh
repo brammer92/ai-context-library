@@ -33,8 +33,11 @@ case "${REL}" in
 esac
 
 # Skip self-writes to index.md / log.md to avoid infinite loops.
+# The embeddings/ sidecar is a machine-generated artifact — it never
+# affects the content catalog, so skip it explicitly here too.
 case "${REL}" in
   index.md|log.md) exit 0 ;;
+  embeddings/*) exit 0 ;;
 esac
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"

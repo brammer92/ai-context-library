@@ -18,24 +18,26 @@ explicit human gate.
 2. [Why GitHub as the context library](#why-github-as-the-context-library)
 3. [The Hermes 5-pillar harness](#the-hermes-5-pillar-harness)
 4. [The Karpathy LLM Wiki layers](#the-karpathy-llm-wiki-layers)
-5. [How this works with Claude Code](#how-this-works-with-claude-code)
-6. [How this works with Claude web UI](#how-this-works-with-claude-web-ui)
-7. [How this works with ChatGPT](#how-this-works-with-chatgpt)
-8. [Installation](#installation)
-9. [Environment variables](#environment-variables)
-10. [Expected context library structure](#expected-context-library-structure)
-11. [Slash commands](#slash-commands)
-12. [Bounded working-set memory](#bounded-working-set-memory)
-13. [Auto-maintained indexes](#auto-maintained-indexes)
-14. [Ingesting sources](#ingesting-sources)
-15. [How validation works](#how-validation-works)
-16. [How secret scanning works](#how-secret-scanning-works)
-17. [Safety model](#safety-model)
-18. [Recommended workflow](#recommended-workflow)
-19. [GitHub setup](#github-setup)
-20. [Troubleshooting](#troubleshooting)
-21. [Future enhancements](#future-enhancements)
-22. [License](#license)
+5. [The skill layer (auto-invocation)](#the-skill-layer-auto-invocation)
+6. [The embeddings layer](#the-embeddings-layer)
+7. [How this works with Claude Code](#how-this-works-with-claude-code)
+8. [How this works with Claude web UI](#how-this-works-with-claude-web-ui)
+9. [How this works with ChatGPT](#how-this-works-with-chatgpt)
+10. [Installation](#installation)
+11. [Environment variables](#environment-variables)
+12. [Expected context library structure](#expected-context-library-structure)
+13. [Slash commands](#slash-commands)
+14. [Bounded working-set memory](#bounded-working-set-memory)
+15. [Auto-maintained indexes](#auto-maintained-indexes)
+16. [Ingesting sources](#ingesting-sources)
+17. [How validation works](#how-validation-works)
+18. [How secret scanning works](#how-secret-scanning-works)
+19. [Safety model](#safety-model)
+20. [Recommended workflow](#recommended-workflow)
+21. [GitHub setup](#github-setup)
+22. [Troubleshooting](#troubleshooting)
+23. [Future enhancements](#future-enhancements)
+24. [License](#license)
 
 ---
 
@@ -122,6 +124,82 @@ Two auto-maintained index files:
   `/library:index`).
 - **`log.md`** — append-only chronological record. Newest entries at top.
   Every write under the library subtree gets logged automatically.
+
+## The skill layer (auto-invocation)
+
+The plugin ships **skills** that auto-activate on conversational context
+— so durable context gets *proposed* the moment it appears, instead of
+depending on the user remembering to type a slash command. This follows
+the Superpowers model: **automation means automatic _invocation_, not
+automatic _action_.** Skills propose; humans still gate every write.
+
+A `SessionStart` hook (`hooks/session_start_bootstrap.sh`) injects a
+short bootstrap at the start of every session: that the library exists,
+which skills auto-activate and on what triggers, and the inviolable
+rules (no auto-commit, no auto-push, no silent writes, no overwrite
+without `--force`). It is text only — it runs no commands and adds no
+measurable latency.
+
+| Skill | Tier | Trigger (sharp `When To Use`) |
+| --- | --- | --- |
+| `detecting-durable-context` | 2 — auto-invoke, propose only | The user *states* a stable preference, a decision plus rationale, an infra/project fact, or a reusable procedure — and it is not already in the library. Never fires on questions, transient task state, or transcript fragments. |
+| `proposing-a-memory` | internal helper | Invoked by `detecting-durable-context` to assemble the validated, dedup-checked, contradiction-checked PROPOSAL block. No standalone trigger. |
+| `library-health-check` | 1 — auto-act (read-only) | The user asks about library state, staleness, cap pressure, pending changes, corpus size. May run `/library:status` and `/library:lint` unprompted because they cannot mutate anything. |
+
+**Three auto-invocation tiers:**
+
+- **Tier 1 — auto-act (read-only).** May run read-only commands without
+  asking. Mutates nothing. (`library-health-check`)
+- **Tier 2 — auto-invoke, propose only.** May read and run read-only ML,
+  and may emit a PROPOSAL block — but may not call any tool that writes.
+  (`detecting-durable-context`)
+- **Tier 3 — approval before every write.** The slash commands
+  (`/library:add-memory`, `/library:commit`, …) run only after explicit
+  human approval of a specific proposal.
+
+The "propose, don't apply" turn: a skill auto-fires → emits a PROPOSAL
+block → the human approves → the slash command runs → the diff is shown
+→ `/library:review` runs → and only then `/library:commit`. Push remains
+manual. Skills shorten the distance to a proposal; they never shorten
+the distance to a commit.
+
+## The embeddings layer
+
+An optional embeddings sidecar gives Claude Code fast nearest-neighbour
+lookup for de-duplication and (in a later phase) contradiction
+detection — **without** putting a vector database on the write path and
+**without** polluting the canonical Markdown.
+
+- **Model.** `nomic-embed-text` (768-dim, Apache-2.0) served by Ollama
+  on local compute. High-volume embedding work stays local; no tokens,
+  no data leaving the network.
+- **Canonical artifact.** `embeddings/memories.jsonl` — one git-tracked
+  JSON line per memory (`id`, `content_hash`, `model`, `dim`,
+  `embedded_at`, `type`, `tags`, `vector`). Deterministic and
+  diff-friendly. Reviewed and committed like any other file — never
+  auto-committed.
+- **Query cache.** ClickHouse `library_embeddings` (see
+  [`clickhouse/schema.sql`](clickhouse/schema.sql)) is a *rebuildable
+  cache* for fast `cosineDistance` queries — never a dependency. Wipe it
+  and one loader run restores it from the JSONL.
+- **Freshness.** Each line carries a `content_hash` over the memory
+  body + type + tags. An unchanged memory is never re-embedded, so the
+  JSONL stays byte-stable; a stale hash tells a consumer to degrade
+  rather than return a bad neighbour.
+- **Hooks.** After a memory write, `hooks/post_write_embed.sh` refreshes
+  the JSONL (`scripts/embed_memory.py`) then syncs the ClickHouse cache
+  (`scripts/embed_load_clickhouse.py`). Backfill an existing corpus with
+  `python3 scripts/embed_memory.py --backfill`.
+- **Graceful degradation.** If Ollama or ClickHouse is unreachable, both
+  scripts warn and exit 0 — the memory write and every existing pipeline
+  step are unaffected. The plugin keeps working with zero ML installed.
+
+**Cross-agent note:** the vectors are *Claude Code infrastructure*.
+Claude web and ChatGPT cannot run nearest-neighbour search and get no
+*direct* benefit from `embeddings/memories.jsonl` — they read the raw
+Markdown via their GitHub connectors as before. The benefit to them is
+*indirect*: a dedup'd, contradiction-checked corpus is a cleaner corpus
+for all three agents.
 
 ## How this works with Claude Code
 
@@ -211,9 +289,15 @@ Claude Code convention.
 | `AI_CONTEXT_LIBRARY_REQUIRE_REVIEW` | `true` | Refuse to commit unless `/library:review` has been run. |
 | `AI_CONTEXT_LIBRARY_ALLOW_AUTO_COMMIT` | `false` | Permit `/library:commit` without an explicit review step. |
 | `AI_CONTEXT_LIBRARY_ALLOW_PUSH` | `false` | Documented only — the plugin never pushes regardless of this value. |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL used by the embeddings layer. |
+| `LIBRARY_EMBED_MODEL` | `nomic-embed-text` | Embedding model pulled in Ollama. |
+| `CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse HTTP endpoint for the embeddings query cache. |
+| `LIBRARY_CLICKHOUSE_TABLE` | `library_embeddings` | Target table for the embeddings cache. |
 
 Defaults are safe: no auto-commit, no auto-push, validation required,
-secret scanning required, human review required.
+secret scanning required, human review required. The embeddings layer is
+optional — if Ollama and ClickHouse are absent, the embedding hooks
+degrade gracefully and the rest of the pipeline is unaffected.
 
 ---
 
@@ -257,6 +341,9 @@ ai-context-hub/
   schemas/
     memory.schema.json
     skill.schema.json
+  embeddings/
+    README.md
+    memories.jsonl   # generated by the embeddings layer; not created by init
 ```
 
 Existing files are never overwritten.
@@ -577,18 +664,29 @@ dependencies.
 
 ## Future enhancements
 
-- Optional support for a single library spanning multiple Git repositories
-  (multi-root).
-- Embeddings sidecar (`embeddings/`) generated on commit so external RAG
-  systems can index without polluting the canonical Markdown.
-- A `--push` flag behind an explicit environment opt-in for users who want
-  the plugin to push automatically once their workflow is mature.
-- Migration helpers for legacy memory formats.
-- A web dashboard reading the same Markdown for browsing.
-- Trust scoring on memories (Hermes-style) so frequently-confirmed
-  entries gain weight and contradicted ones lose weight.
-- Holographic Reduced Representation retrieval over the archive (Hermes
-  research direction) as an opt-in sidecar.
+Shipped since the initial release: the [skill layer](#the-skill-layer-auto-invocation)
+(SessionStart bootstrap + auto-invoking skills) and the
+[embeddings layer](#the-embeddings-layer) (`embeddings/memories.jsonl`
+sidecar + ClickHouse query cache).
+
+Still ahead:
+
+- **Contradiction detection on write** — embedding-NN narrowing + a
+  Haiku-tier LLM judge inside `proposing-a-memory`, surfacing conflicts
+  in the PROPOSAL block with amend / supersede / co-flag resolutions.
+- **`/library:cluster` embedding upgrade** — near-duplicate detection
+  across paraphrased entries via `cosineDistance`, with a stdlib
+  tag-clustering fallback.
+- **Trust scoring** — a transparent, deterministic `trust` frontmatter
+  field driven by confirmations, contradictions, edits, and promotions.
+- **A `embed-reconcile` GitHub Action** — re-embeds drift on push and
+  reports staleness, without committing anything itself.
+- **Observability** — `library_events` / `library_ml_decisions`
+  ClickHouse tables, a Grafana dashboard, and n8n→Telegram alerts.
+- Optional multi-root libraries; a `--push` opt-in; legacy-format
+  migration helpers; a web dashboard.
+- Holographic Reduced Representation retrieval — deferred; no
+  demonstrated win over cosine at the current corpus scale.
 
 ---
 

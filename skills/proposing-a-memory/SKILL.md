@@ -26,8 +26,9 @@ want detecting-durable-context instead.
 - A draft: candidate body text plus inferred `type`, `scope`,
   `importance`, `tags`, and `title`.
 - index.md and read access to memories/** .
-- Optional: ClickHouse library_embeddings for nearest-neighbour lookup.
-  Treat as best-effort — absence must not block the proposal.
+- scripts/embed_query.py for nearest-neighbour lookup (ClickHouse with a
+  local-JSONL cosine fallback). Treat as best-effort — absence must not
+  block the proposal.
 
 ## Procedure
 1. Secret pre-scan: reject the draft outright if the title or body
@@ -35,11 +36,14 @@ want detecting-durable-context instead.
 2. Useful-content check: the body must clear the useful-content
    heuristic (>= 40 chars, not a transcript fragment). If it fails, ask
    the user to restate rather than proposing a stub.
-3. Duplicate check: embed the draft and query ClickHouse
-   library_embeddings for the nearest existing memories.
+3. Duplicate check: run
+   `python3 scripts/embed_query.py --text "<draft body>" --library <lib>`
+   (it embeds the draft and returns nearest neighbours — ClickHouse if
+   up, the local JSONL cosine fallback otherwise).
    - cosine >= 0.92 -> switch to proposing an UPDATE to that memory.
    - 0.85-0.92 -> include the near-match in the proposal as context.
-   - If ClickHouse/Ollama is down -> mark dedup "UNAVAILABLE".
+   - If Ollama is down the script exits 0 with a note and no results ->
+     mark dedup "UNAVAILABLE".
 4. Auto-tag assist: collect tags from the nearest neighbours; suggest
    any that fit and are not already on the draft. Skip silently if the
    neighbour lookup was unavailable.

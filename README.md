@@ -190,6 +190,11 @@ detection — **without** putting a vector database on the write path and
   the JSONL (`scripts/embed_memory.py`) then syncs the ClickHouse cache
   (`scripts/embed_load_clickhouse.py`). Backfill an existing corpus with
   `python3 scripts/embed_memory.py --backfill`.
+- **Dedup lookup.** `scripts/embed_query.py` is the read side — given
+  text or a memory id it returns the nearest neighbours, used by the
+  `proposing-a-memory` skill to catch near-duplicates before a proposal
+  reaches you. It queries ClickHouse, and falls back to brute-force
+  cosine over the JSONL so dedup still works with zero ClickHouse.
 - **Graceful degradation.** If Ollama or ClickHouse is unreachable, both
   scripts warn and exit 0 — the memory write and every existing pipeline
   step are unaffected. The plugin keeps working with zero ML installed.

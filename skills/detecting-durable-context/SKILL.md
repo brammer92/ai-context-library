@@ -41,8 +41,8 @@ slash command. A noisy one costs user trust in every skill.
 - The user's statement(s) from the current turn.
 - index.md (for a fast "is this already known" pass).
 - Read access to memories/** for confirmation.
-- ClickHouse library_embeddings (via the dedup/contradiction checks in
-  proposing-a-memory) — optional; degrade if unavailable.
+- scripts/embed_query.py (via the dedup check in proposing-a-memory) —
+  optional; degrade if unavailable.
 
 ## Procedure
 1. Classify the statement against the memory `type` enum

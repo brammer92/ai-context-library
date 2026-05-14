@@ -20,24 +20,25 @@ explicit human gate.
 4. [The Karpathy LLM Wiki layers](#the-karpathy-llm-wiki-layers)
 5. [The skill layer (auto-invocation)](#the-skill-layer-auto-invocation)
 6. [The embeddings layer](#the-embeddings-layer)
-7. [How this works with Claude Code](#how-this-works-with-claude-code)
-8. [How this works with Claude web UI](#how-this-works-with-claude-web-ui)
-9. [How this works with ChatGPT](#how-this-works-with-chatgpt)
-10. [Installation](#installation)
-11. [Environment variables](#environment-variables)
-12. [Expected context library structure](#expected-context-library-structure)
-13. [Slash commands](#slash-commands)
-14. [Bounded working-set memory](#bounded-working-set-memory)
-15. [Auto-maintained indexes](#auto-maintained-indexes)
-16. [Ingesting sources](#ingesting-sources)
-17. [How validation works](#how-validation-works)
-18. [How secret scanning works](#how-secret-scanning-works)
-19. [Safety model](#safety-model)
-20. [Recommended workflow](#recommended-workflow)
-21. [GitHub setup](#github-setup)
-22. [Troubleshooting](#troubleshooting)
-23. [Future enhancements](#future-enhancements)
-24. [License](#license)
+7. [ML-assisted library maintenance](#ml-assisted-library-maintenance)
+8. [How this works with Claude Code](#how-this-works-with-claude-code)
+9. [How this works with Claude web UI](#how-this-works-with-claude-web-ui)
+10. [How this works with ChatGPT](#how-this-works-with-chatgpt)
+11. [Installation](#installation)
+12. [Environment variables](#environment-variables)
+13. [Expected context library structure](#expected-context-library-structure)
+14. [Slash commands](#slash-commands)
+15. [Bounded working-set memory](#bounded-working-set-memory)
+16. [Auto-maintained indexes](#auto-maintained-indexes)
+17. [Ingesting sources](#ingesting-sources)
+18. [How validation works](#how-validation-works)
+19. [How secret scanning works](#how-secret-scanning-works)
+20. [Safety model](#safety-model)
+21. [Recommended workflow](#recommended-workflow)
+22. [GitHub setup](#github-setup)
+23. [Troubleshooting](#troubleshooting)
+24. [Future enhancements](#future-enhancements)
+25. [License](#license)
 
 ---
 
@@ -205,6 +206,27 @@ Claude web and ChatGPT cannot run nearest-neighbour search and get no
 Markdown via their GitHub connectors as before. The benefit to them is
 *indirect*: a dedup'd, contradiction-checked corpus is a cleaner corpus
 for all three agents.
+
+## ML-assisted library maintenance
+
+Four scripts use the embeddings layer to actively improve the corpus.
+**Every one is deterministic where it can be, fully tested without a
+live backend, degrades gracefully, and only ever *suggests* — none
+mutate canonical files except `library_trust.py --apply`, which still
+goes through the normal review/commit gate.**
+
+| Script | What it does | Confidence basis |
+| --- | --- | --- |
+| `embed_query.py` | Nearest-neighbour lookup for a draft or a memory id (ClickHouse → local-JSONL fallback). | Pure cosine math; fully tested. |
+| `library_cluster_embed.py` | Embedding near-duplicate clustering — groups paraphrased memories that share meaning but not tags. Backs `/library:cluster --embeddings`; falls back to tag clustering. | Deterministic union-find over cosine; fully tested. |
+| `embed_tag_suggest.py` | Auto-tag assist — ranks the tags of a draft's nearest neighbours. Rules + NN, not a trained classifier. | Deterministic given the neighbour set; fully tested. |
+| `library_trust.py` | Trust scoring — a transparent weighted formula (importance + references + promotion − age decay) written to a `trust` frontmatter field. Dry-run by default. | No model — an auditable formula; every weight is a legible constant. |
+| `library_contradict.py` | Contradiction candidate detection — embedding-NN narrowing into "likely"/"possible" bands, plus an **optional, pluggable** Haiku-tier LLM judge (`--judge`, needs `ANTHROPIC_API_KEY`). | Narrowing is deterministic and tested; the LLM verdict is advisory and degrades to `UNAVAILABLE` — it never fabricates a "no contradiction". |
+
+The LLM judge in `library_contradict.py` is the **one** component whose
+*output quality* is not verifiable without a live API smoke test — by
+design it is opt-in and its absence degrades to an honest non-answer.
+Everything else is deterministic and verified end-to-end.
 
 ## How this works with Claude Code
 
@@ -669,25 +691,30 @@ dependencies.
 
 ## Future enhancements
 
-Shipped since the initial release: the [skill layer](#the-skill-layer-auto-invocation)
-(SessionStart bootstrap + auto-invoking skills) and the
-[embeddings layer](#the-embeddings-layer) (`embeddings/memories.jsonl`
-sidecar + ClickHouse query cache).
+Shipped since the initial release:
+
+- The [skill layer](#the-skill-layer-auto-invocation) — SessionStart
+  bootstrap + auto-invoking skills.
+- The [embeddings layer](#the-embeddings-layer) —
+  `embeddings/memories.jsonl` sidecar + ClickHouse query cache.
+- [ML-assisted library maintenance](#ml-assisted-library-maintenance) —
+  embedding near-duplicate clustering, auto-tag assist, deterministic
+  trust scoring, and contradiction candidate detection (with an
+  optional, pluggable LLM judge).
 
 Still ahead:
 
-- **Contradiction detection on write** — embedding-NN narrowing + a
-  Haiku-tier LLM judge inside `proposing-a-memory`, surfacing conflicts
-  in the PROPOSAL block with amend / supersede / co-flag resolutions.
-- **`/library:cluster` embedding upgrade** — near-duplicate detection
-  across paraphrased entries via `cosineDistance`, with a stdlib
-  tag-clustering fallback.
-- **Trust scoring** — a transparent, deterministic `trust` frontmatter
-  field driven by confirmations, contradictions, edits, and promotions.
-- **A `embed-reconcile` GitHub Action** — re-embeds drift on push and
+- **Wiring the LLM judge into `proposing-a-memory`** — and a live API
+  smoke test of its verdict quality (the judge mechanism ships now;
+  trusting its output does not, yet).
+- **An `embed-reconcile` GitHub Action** — re-embeds drift on push and
   reports staleness, without committing anything itself.
 - **Observability** — `library_events` / `library_ml_decisions`
-  ClickHouse tables, a Grafana dashboard, and n8n→Telegram alerts.
+  ClickHouse tables (DDL already in `clickhouse/schema.sql`), a Grafana
+  dashboard, and n8n→Telegram alerts.
+- **Trust signal enrichment** — feeding contradiction counts and
+  explicit confirmations into `library_trust.py` once the feedback-event
+  stream exists.
 - Optional multi-root libraries; a `--push` opt-in; legacy-format
   migration helpers; a web dashboard.
 - Holographic Reduced Representation retrieval — deferred; no

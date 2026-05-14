@@ -26,9 +26,11 @@ want detecting-durable-context instead.
 - A draft: candidate body text plus inferred `type`, `scope`,
   `importance`, `tags`, and `title`.
 - index.md and read access to memories/** .
-- scripts/embed_query.py for nearest-neighbour lookup (ClickHouse with a
-  local-JSONL cosine fallback). Treat as best-effort — absence must not
-  block the proposal.
+- scripts/embed_query.py for nearest-neighbour lookup,
+  scripts/embed_tag_suggest.py for tag assist, and the
+  checking-for-contradictions skill (scripts/library_contradict.py) for
+  the contradiction check. All ClickHouse-with-local-JSONL-fallback —
+  treat as best-effort; absence must not block the proposal.
 
 ## Procedure
 1. Secret pre-scan: reject the draft outright if the title or body
@@ -44,12 +46,15 @@ want detecting-durable-context instead.
    - 0.85-0.92 -> include the near-match in the proposal as context.
    - If Ollama is down the script exits 0 with a note and no results ->
      mark dedup "UNAVAILABLE".
-4. Auto-tag assist: collect tags from the nearest neighbours; suggest
-   any that fit and are not already on the draft. Skip silently if the
-   neighbour lookup was unavailable.
-5. Contradiction check: for the nearest neighbours, flag any that
-   conflict with the draft. If the contradiction backend is down, mark
-   it "UNAVAILABLE" rather than asserting "none".
+4. Auto-tag assist: run
+   `python3 scripts/embed_tag_suggest.py --text "<draft body>" --existing "<draft tags>" --library <lib>`
+   and fold any sensible suggestions into the draft's tags. Skip
+   silently if the lookup was unavailable.
+5. Contradiction check: invoke checking-for-contradictions (which runs
+   `scripts/library_contradict.py`). If a `contradicts`/`supersedes`
+   verdict comes back, include the contradiction block and the three
+   resolution options. If the check could not run, mark it
+   "UNAVAILABLE" rather than asserting "none".
 6. Resolve the target folder from `type` via the memory-type -> folder
    map.
 7. Emit exactly one PROPOSAL block. Stop. Wait for approval.

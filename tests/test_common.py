@@ -168,6 +168,9 @@ class TestPathSafety(unittest.TestCase):
         self.assertTrue(common.is_under_allowed_library_path(Path("log.md")))
         self.assertTrue(common.is_under_allowed_library_path(Path("sources/2026-05-11-foo.md")))
 
+    def test_embeddings_sidecar_allowed(self):
+        self.assertTrue(common.is_under_allowed_library_path(Path("embeddings/memories.jsonl")))
+
 
 class TestHermesCapsAndBody(unittest.TestCase):
     def test_caps_exposed(self):

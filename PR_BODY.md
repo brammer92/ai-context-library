@@ -121,7 +121,7 @@ verified by tests, not asserted.
    silently corrupts the corpus — but do a live smoke test before
    trusting verdicts:
    ```bash
-   ANTHROPIC_API_KEY=... python3 scripts/library_contradict.py \
+   ANTHROPIC_API_KEY=$YOUR_KEY python3 scripts/library_contradict.py \
        --text "we dropped macvlan for the syslog stack" --judge --library "$HUB"
    ```
 2. **No live Ollama/ClickHouse in the build environment.** Verified

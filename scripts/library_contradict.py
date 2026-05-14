@@ -101,13 +101,13 @@ def judge_candidates(
     return candidates
 
 
-def _anthropic_judge(draft: str, neighbour: str, *, api_key: str, model: str) -> str:
+def _anthropic_judge(draft: str, neighbour: str, *, key: str, model: str) -> str:
     """Haiku-tier LLM-as-judge over one (draft, neighbour) pair. Stdlib only.
 
     Raises JudgeUnavailable on a missing key, network failure, or an
     unparseable response.
     """
-    if not api_key:
+    if not key:
         raise JudgeUnavailable("ANTHROPIC_API_KEY is not set")
     prompt = (
         "You compare two knowledge-base memories. Reply with EXACTLY one "
@@ -124,7 +124,7 @@ def _anthropic_judge(draft: str, neighbour: str, *, api_key: str, model: str) ->
         "https://api.anthropic.com/v1/messages", data=body,
         headers={
             "content-type": "application/json",
-            "x-api-key": api_key,
+            "x-api-key": key,
             "anthropic-version": "2023-06-01",
         },
     )
@@ -208,10 +208,10 @@ def main(argv: list[str] | None = None, *, embed_fn=None, judge_fn=None) -> int:
 
     # Default judge: only wire the real one when explicitly asked AND a key exists.
     if judge_fn is None and args.judge:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
 
         def judge_fn(draft: str, neighbour: str) -> str:  # noqa: E306
-            return _anthropic_judge(draft, neighbour, api_key=api_key, model=args.judge_model)
+            return _anthropic_judge(draft, neighbour, key=anthropic_key, model=args.judge_model)
 
     try:
         vector = embed_fn(query_text)

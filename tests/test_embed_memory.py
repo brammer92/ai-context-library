@@ -1,8 +1,8 @@
 """Tests for scripts.embed_memory.
 
-The embedding backend (Ollama) is never contacted in tests: every test
-injects a fake ``embed_fn``. The graceful-degradation path is exercised
-with a fake that raises ``OllamaUnavailable``.
+No live embedding backend is contacted in tests: every test injects a
+fake ``embed_fn``. The graceful-degradation path is exercised with a
+fake that raises ``EmbedUnavailable``.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def fake_embed(text: str) -> list[float]:
 
 
 def unavailable_embed(text: str) -> list[float]:
-    raise embed_memory.OllamaUnavailable("connection refused (test)")
+    raise embed_memory.EmbedUnavailable("connection refused (test)")
 
 
 def write_memory(lib: Path, folder: str, mem_id: str, *, body: str,
@@ -177,6 +177,20 @@ class TestBackfill(unittest.TestCase):
         self.assertEqual(rc, 0, msg=err)
         self.assertEqual(set(embed_memory.load_jsonl(self.jsonl)), {"mem_20260514_solo"})
 
+    def test_model_mismatch_triggers_reembed(self):
+        """Changing the embedding model re-embeds every record, even those
+        whose content_hash is otherwise unchanged — so a backend swap
+        auto-migrates the corpus on the next backfill."""
+        write_memory(self.lib, "decisions", "mem_20260514_one",
+                     body="A durable decision body about networking.")
+        rc, _, _ = run(["--backfill", "--library", str(self.lib), "--model", "model-a"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(embed_memory.load_jsonl(self.jsonl)["mem_20260514_one"]["model"], "model-a")
+        rc, out, _ = run(["--backfill", "--library", str(self.lib), "--model", "model-b"])
+        self.assertEqual(rc, 0)
+        self.assertIn("embedded: 1", out)  # not "unchanged: 1"
+        self.assertEqual(embed_memory.load_jsonl(self.jsonl)["mem_20260514_one"]["model"], "model-b")
+
     def test_single_file_outside_memories_is_ignored(self):
         other = self.lib / "context" / "note.md"
         other.parent.mkdir(parents=True)
@@ -198,7 +212,7 @@ class TestGracefulDegradation(unittest.TestCase):
     def test_ollama_unavailable_exits_zero_and_writes_nothing(self):
         write_memory(self.lib, "decisions", "mem_20260514_one", body="A durable decision body.")
         rc, out, err = run(["--backfill", "--library", str(self.lib)], embed_fn=unavailable_embed)
-        self.assertEqual(rc, 0, msg="must not break the pipeline when Ollama is down")
+        self.assertEqual(rc, 0, msg="must not break the pipeline when the embedder is down")
         self.assertFalse(self.jsonl.exists())
         self.assertIn("skipped", (out + err).lower())
 

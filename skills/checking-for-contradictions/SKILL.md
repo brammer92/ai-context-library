@@ -56,10 +56,12 @@ contradicts: <none | mem_x (verdict, cos) ... | UNAVAILABLE — N likely candida
   choice for the user; it never auto-resolves anything.
 
 ## Failure Modes
-- Ollama down -> `library_contradict.py` exits 0 with a note; report the
-  contradiction field as UNAVAILABLE.
-- ClickHouse down -> the script falls back to local-JSONL cosine; the
-  candidate list is still produced.
+- Voyage AI unreachable or `VOYAGE_API_KEY` unset ->
+  `library_contradict.py` exits 0 with a note; report the contradiction
+  field as UNAVAILABLE.
+- The candidate-narrowing step runs brute-force cosine over the local
+  JSONL — no external query service to fall back from; if the JSONL is
+  present and the embedder works, candidates are produced.
 - No Anthropic key / judge fails -> verdicts are UNAVAILABLE; fall back
   to surfacing `likely`-band candidates for manual review.
 - No embeddings generated yet -> no candidates; mark UNAVAILABLE and

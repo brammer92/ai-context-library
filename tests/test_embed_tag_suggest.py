@@ -1,8 +1,8 @@
 """Tests for scripts.embed_tag_suggest — auto-tag assist.
 
 Deterministic: tag suggestion is frequency ranking over a neighbour set.
-Tests inject a fake embed_fn and point ClickHouse at a dead port so the
-local-JSONL fallback is exercised.
+Tests inject a fake embed_fn; the neighbour lookup is brute-force cosine
+over a JSONL we write directly.
 """
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import embed_tag_suggest as ets  # noqa: E402
 
-DEAD_CH = "http://127.0.0.1:9"
 
 
 def neighbour(tags: list[str]) -> dict:
@@ -91,27 +90,26 @@ class TestMain(unittest.TestCase):
         ])
         embed_fn = lambda t: [1.0, 0.0]  # noqa: E731
         rc, out, err = run(
-            ["--text", "a docker deployment decision", "--library", str(self.lib),
-             "--clickhouse-url", DEAD_CH, "--k", "2"],
+            ["--text", "a docker deployment decision", "--library", str(self.lib), "--k", "2"],
             embed_fn,
         )
         self.assertEqual(rc, 0, msg=err)
         self.assertIn("docker", out)
 
-    def test_ollama_down_is_graceful(self):
+    def test_embedder_down_is_graceful(self):
         write_jsonl(self.lib, [
             {"id": "mem_a", "type": "decision", "tags": ["docker"], "vector": [1.0]},
         ])
         import embed_memory
 
         def boom(text: str):
-            raise embed_memory.OllamaUnavailable("down (test)")
+            raise embed_memory.EmbedUnavailable("down (test)")
 
         rc, out, err = run(
-            ["--text", "anything", "--library", str(self.lib), "--clickhouse-url", DEAD_CH],
+            ["--text", "anything", "--library", str(self.lib)],
             boom,
         )
-        self.assertEqual(rc, 0, msg="Ollama down must not fail the caller")
+        self.assertEqual(rc, 0, msg="embedder down must not fail the caller")
         self.assertIn("unavailable", (out + err).lower())
 
     def test_json_output_parseable(self):
@@ -121,8 +119,7 @@ class TestMain(unittest.TestCase):
         ])
         embed_fn = lambda t: [1.0, 0.0]  # noqa: E731
         rc, out, err = run(
-            ["--text", "docker thing", "--library", str(self.lib),
-             "--clickhouse-url", DEAD_CH, "--json"],
+            ["--text", "docker thing", "--library", str(self.lib), "--json"],
             embed_fn,
         )
         self.assertEqual(rc, 0, msg=err)

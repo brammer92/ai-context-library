@@ -8,10 +8,10 @@ above a cosine-similarity threshold, so the user can spot "I wrote this
 twice in different words" and consolidate.
 
 It is deterministic — pure cosine math over the canonical
-`embeddings/memories.jsonl` artifact. No LLM, no API, no live backend
-required. If there is no embeddings artifact yet, it falls back to the
-stdlib tag-based clustering so `/library:cluster` always returns
-something useful.
+`embeddings/memories.jsonl` artifact. No LLM, no live backend required.
+If there is no embeddings artifact yet, it falls back to the stdlib
+tag-based clustering so `/library:cluster` always returns something
+useful.
 
 Output is suggestion-only — nothing is mutated.
 
@@ -111,9 +111,6 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Cosine similarity threshold (default: {DEFAULT_THRESHOLD}).")
     parser.add_argument("--min-cluster", type=int, default=5,
                         help="Tag-clustering fallback minimum cluster size.")
-    parser.add_argument("--clickhouse-url", default=None,
-                        help="Accepted for interface parity; clustering uses the "
-                             "canonical local JSONL artifact.")
     parser.add_argument("--json", action="store_true", help="Emit groups as JSON.")
     args = parser.parse_args(argv)
 

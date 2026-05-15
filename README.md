@@ -166,39 +166,40 @@ the distance to a commit.
 
 ## The embeddings layer
 
-An optional embeddings sidecar gives Claude Code fast nearest-neighbour
-lookup for de-duplication and (in a later phase) contradiction
-detection — **without** putting a vector database on the write path and
-**without** polluting the canonical Markdown.
+An optional embeddings sidecar gives Claude Code nearest-neighbour
+lookup for de-duplication and contradiction candidate detection —
+**without** any local service, **without** a vector database, and
+**without** polluting the canonical Markdown. The plugin runs as plain
+Python + git; everything else (Voyage, Anthropic, GitHub) is cloud.
 
-- **Model.** `nomic-embed-text` (768-dim, Apache-2.0) served by Ollama
-  on local compute. High-volume embedding work stays local; no tokens,
-  no data leaving the network.
+- **Model.** `voyage-3.5` (1024-dim) via Voyage AI — the
+  Anthropic-recommended embedding provider. `LIBRARY_EMBED_MODEL` lets
+  you pick a different Voyage model (e.g. `voyage-3.5-lite` for lower
+  cost or `voyage-4-large` for higher quality).
 - **Canonical artifact.** `embeddings/memories.jsonl` — one git-tracked
   JSON line per memory (`id`, `content_hash`, `model`, `dim`,
   `embedded_at`, `type`, `tags`, `vector`). Deterministic and
   diff-friendly. Reviewed and committed like any other file — never
   auto-committed.
-- **Query cache.** ClickHouse `library_embeddings` (see
-  [`clickhouse/schema.sql`](clickhouse/schema.sql)) is a *rebuildable
-  cache* for fast `cosineDistance` queries — never a dependency. Wipe it
-  and one loader run restores it from the JSONL.
+- **Query path.** Brute-force cosine over the JSONL directly
+  (`scripts/embed_query.py`). No external query service. At single-user
+  / low-hundreds-of-memories scale, sub-second per query.
 - **Freshness.** Each line carries a `content_hash` over the memory
   body + type + tags. An unchanged memory is never re-embedded, so the
-  JSONL stays byte-stable; a stale hash tells a consumer to degrade
-  rather than return a bad neighbour.
+  JSONL stays byte-stable. The record's `model` field is also checked:
+  if the configured embedding model changed, the corpus auto-re-embeds
+  on the next backfill — backend swaps migrate without `--force`.
 - **Hooks.** After a memory write, `hooks/post_write_embed.sh` refreshes
-  the JSONL (`scripts/embed_memory.py`) then syncs the ClickHouse cache
-  (`scripts/embed_load_clickhouse.py`). Backfill an existing corpus with
-  `python3 scripts/embed_memory.py --backfill`.
-- **Dedup lookup.** `scripts/embed_query.py` is the read side — given
-  text or a memory id it returns the nearest neighbours, used by the
-  `proposing-a-memory` skill to catch near-duplicates before a proposal
-  reaches you. It queries ClickHouse, and falls back to brute-force
-  cosine over the JSONL so dedup still works with zero ClickHouse.
-- **Graceful degradation.** If Ollama or ClickHouse is unreachable, both
-  scripts warn and exit 0 — the memory write and every existing pipeline
-  step are unaffected. The plugin keeps working with zero ML installed.
+  the JSONL via `scripts/embed_memory.py`. Backfill an existing corpus
+  with `python3 scripts/embed_memory.py --backfill`.
+- **Privacy posture.** Memory text is sent to Voyage AI under your
+  configured `VOYAGE_API_KEY`. This is the explicit, configured cloud
+  routing — high-volume embedding stays cheap (~$0.06/1M tokens for
+  `voyage-3.5`), and nothing else local is required.
+- **Graceful degradation.** If Voyage is unreachable or
+  `VOYAGE_API_KEY` is unset, the embed scripts warn and exit 0 — the
+  memory write and every existing pipeline step are unaffected. The
+  plugin keeps working with zero ML installed.
 
 **Cross-agent note:** the vectors are *Claude Code infrastructure*.
 Claude web and ChatGPT cannot run nearest-neighbour search and get no
@@ -217,7 +218,7 @@ goes through the normal review/commit gate.**
 
 | Script | What it does | Confidence basis |
 | --- | --- | --- |
-| `embed_query.py` | Nearest-neighbour lookup for a draft or a memory id (ClickHouse → local-JSONL fallback). | Pure cosine math; fully tested. |
+| `embed_query.py` | Nearest-neighbour lookup for a draft or a memory id (brute-force cosine over the canonical JSONL). | Pure cosine math; fully tested. |
 | `library_cluster_embed.py` | Embedding near-duplicate clustering — groups paraphrased memories that share meaning but not tags. Backs `/library:cluster --embeddings`; falls back to tag clustering. | Deterministic union-find over cosine; fully tested. |
 | `embed_tag_suggest.py` | Auto-tag assist — ranks the tags of a draft's nearest neighbours. Rules + NN, not a trained classifier. | Deterministic given the neighbour set; fully tested. |
 | `library_trust.py` | Trust scoring — a transparent weighted formula (importance + references + promotion − age decay) written to a `trust` frontmatter field. Dry-run by default. | No model — an auditable formula; every weight is a legible constant. |
@@ -316,15 +317,15 @@ Claude Code convention.
 | `AI_CONTEXT_LIBRARY_REQUIRE_REVIEW` | `true` | Refuse to commit unless `/library:review` has been run. |
 | `AI_CONTEXT_LIBRARY_ALLOW_AUTO_COMMIT` | `false` | Permit `/library:commit` without an explicit review step. |
 | `AI_CONTEXT_LIBRARY_ALLOW_PUSH` | `false` | Documented only — the plugin never pushes regardless of this value. |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL used by the embeddings layer. |
-| `LIBRARY_EMBED_MODEL` | `nomic-embed-text` | Embedding model pulled in Ollama. |
-| `CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse HTTP endpoint for the embeddings query cache. |
-| `LIBRARY_CLICKHOUSE_TABLE` | `library_embeddings` | Target table for the embeddings cache. |
+| `VOYAGE_API_KEY` | _(unset)_ | Required for embeddings. Unset → embedding hooks exit 0 with a warning; the rest of the pipeline runs unaffected. |
+| `LIBRARY_EMBED_MODEL` | `voyage-3.5` | Voyage embedding model. Examples: `voyage-3.5-lite` (lower cost), `voyage-4-large` (higher quality). |
+| `VOYAGE_BASE_URL` | `https://api.voyageai.com` | Voyage API base URL (override only if proxying). |
+| `ANTHROPIC_API_KEY` | _(unset)_ | Optional. When set with `library_contradict.py --judge`, runs the Haiku LLM judge over contradiction candidates. Unset → verdicts are `UNAVAILABLE`. |
 
 Defaults are safe: no auto-commit, no auto-push, validation required,
 secret scanning required, human review required. The embeddings layer is
-optional — if Ollama and ClickHouse are absent, the embedding hooks
-degrade gracefully and the rest of the pipeline is unaffected.
+optional — if `VOYAGE_API_KEY` is unset, the embedding hooks degrade
+gracefully and the rest of the pipeline is unaffected.
 
 ---
 
@@ -691,16 +692,17 @@ dependencies.
 
 ## Future enhancements
 
-Shipped since the initial release:
+Shipped:
 
 - The [skill layer](#the-skill-layer-auto-invocation) — SessionStart
   bootstrap + auto-invoking skills.
 - The [embeddings layer](#the-embeddings-layer) —
-  `embeddings/memories.jsonl` sidecar + ClickHouse query cache.
+  `embeddings/memories.jsonl` sidecar, Voyage AI embeddings, no local
+  service.
 - [ML-assisted library maintenance](#ml-assisted-library-maintenance) —
   embedding near-duplicate clustering, auto-tag assist, deterministic
   trust scoring, and contradiction candidate detection (with an
-  optional, pluggable LLM judge).
+  optional, pluggable Anthropic LLM judge).
 
 Still ahead:
 
@@ -709,11 +711,8 @@ Still ahead:
   trusting its output does not, yet).
 - **An `embed-reconcile` GitHub Action** — re-embeds drift on push and
   reports staleness, without committing anything itself.
-- **Observability** — `library_events` / `library_ml_decisions`
-  ClickHouse tables (DDL already in `clickhouse/schema.sql`), a Grafana
-  dashboard, and n8n→Telegram alerts.
 - **Trust signal enrichment** — feeding contradiction counts and
-  explicit confirmations into `library_trust.py` once the feedback-event
+  explicit confirmations into `library_trust.py` once a feedback-event
   stream exists.
 - Optional multi-root libraries; a `--push` opt-in; legacy-format
   migration helpers; a web dashboard.

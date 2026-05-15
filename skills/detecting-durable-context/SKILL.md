@@ -69,10 +69,11 @@ diff, and runs /library:review, but does not commit.
 ## Safety Checks
 - Never call /library:add-memory, Write, or Edit from this skill.
 - Refuse to propose anything matching a scan_secrets.py pattern.
-- If the duplicate/contradiction checks are unavailable
-  (Ollama/ClickHouse/API down), still emit the proposal but label it
-  "dedup/contradiction check UNAVAILABLE — verify manually or run
-  /library:lint after commit". Never block on ML being down.
+- If the duplicate/contradiction checks are unavailable (Voyage AI
+  unreachable, `VOYAGE_API_KEY` unset, or the LLM judge is not wired),
+  still emit the proposal but label it "dedup/contradiction check
+  UNAVAILABLE — verify manually or run /library:lint after commit".
+  Never block on ML being down.
 - Do not propose more than one memory per user turn unless the user
   clearly stated multiple distinct durable facts.
 

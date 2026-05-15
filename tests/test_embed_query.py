@@ -1,8 +1,7 @@
 """Tests for scripts.embed_query — nearest-neighbour lookup.
 
-No live backend: tests inject a fake ``embed_fn`` and point
-``--clickhouse-url`` at an unreachable port so the ClickHouse path fails
-fast and the local-JSONL fallback is exercised.
+No live backend: tests inject a fake ``embed_fn`` and exercise the local
+brute-force cosine over embeddings/memories.jsonl directly.
 """
 from __future__ import annotations
 
@@ -19,9 +18,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import common  # noqa: E402
 import embed_query  # noqa: E402
-
-# A port nothing listens on -> connection refused, fast.
-DEAD_CH = "http://127.0.0.1:9"
 
 
 def fake_embed_factory(table: dict[str, list[float]]):
@@ -105,20 +101,18 @@ class TestMain(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_text_query_falls_back_to_local_when_clickhouse_down(self):
+    def test_text_query_returns_neighbours(self):
         write_jsonl(self.lib, [
             {"id": "mem_docker", "type": "user_preference", "tags": ["docker"], "vector": [1.0, 0.0]},
             {"id": "mem_other", "type": "fact", "tags": ["x"], "vector": [0.0, 1.0]},
         ])
         embed_fn = fake_embed_factory({"compose": [1.0, 0.0]})
         rc, out, err = run(
-            ["--text", "docker compose preference", "--library", str(self.lib),
-             "--clickhouse-url", DEAD_CH],
+            ["--text", "docker compose preference", "--library", str(self.lib)],
             embed_fn,
         )
         self.assertEqual(rc, 0, msg=err)
         self.assertIn("mem_docker", out)
-        self.assertIn("local", (out + err).lower())  # notes the fallback path
 
     def test_memory_id_query_excludes_itself(self):
         write_memory(self.lib, "mem_subject", "A durable decision about networking.")
@@ -128,7 +122,7 @@ class TestMain(unittest.TestCase):
         ])
         embed_fn = fake_embed_factory({"networking": [1.0, 0.0]})
         rc, out, err = run(
-            ["--memory", "mem_subject", "--library", str(self.lib), "--clickhouse-url", DEAD_CH],
+            ["--memory", "mem_subject", "--library", str(self.lib)],
             embed_fn,
         )
         self.assertEqual(rc, 0, msg=err)
@@ -138,11 +132,11 @@ class TestMain(unittest.TestCase):
     def test_no_embeddings_file_is_graceful(self):
         embed_fn = fake_embed_factory({"anything": [1.0]})
         rc, out, err = run(
-            ["--text", "anything at all", "--library", str(self.lib), "--clickhouse-url", DEAD_CH],
+            ["--text", "anything at all", "--library", str(self.lib)],
             embed_fn,
         )
         self.assertEqual(rc, 0)
-        self.assertIn("no", (out + err).lower())  # "no neighbours" / "no embeddings"
+        self.assertIn("no", (out + err).lower())  # "no neighbours"
 
     def test_json_output_is_parseable(self):
         write_jsonl(self.lib, [
@@ -150,8 +144,7 @@ class TestMain(unittest.TestCase):
         ])
         embed_fn = fake_embed_factory({"query": [1.0, 0.0]})
         rc, out, err = run(
-            ["--text", "query text", "--library", str(self.lib),
-             "--clickhouse-url", DEAD_CH, "--json"],
+            ["--text", "query text", "--library", str(self.lib), "--json"],
             embed_fn,
         )
         self.assertEqual(rc, 0, msg=err)

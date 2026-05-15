@@ -126,6 +126,49 @@ class TestCreateMemory(unittest.TestCase):
         self.assertEqual(list(self.lib.rglob("*.md")), [])
         self.assertIn("credential-shaped token", err)
 
+    def test_secret_content_never_lands_in_library(self):
+        """A secret that the pre-scan misses but the post-scan catches
+        must never land anywhere under the library tree — atomic write
+        means the tempfile lives in /tmp and os.replace is only reached
+        after both gates pass."""
+        # `password = ...` matches generic_credential post-scan but the
+        # pre-scan suppresses env-var refs. A bare token value clears the
+        # pre-scan only if the regex it uses is narrower than scan_secrets'.
+        # Either way we want zero files under the library on failure.
+        secret_body = (
+            "Durable content about credential hygiene with a token "
+            "embedded here ghp_" + "a" * 30 + "bbbb that should never "
+            "land on disk in the library tree."
+        )
+        rc, _, _ = run([
+            "--content", secret_body,
+            "--type", "user_preference",
+            "--library", str(self.lib),
+        ])
+        self.assertEqual(rc, 1)
+        # Atomic write: the rglob must come up empty for the WHOLE library.
+        self.assertEqual(list(self.lib.rglob("*.md")), [])
+
+    def test_no_partial_file_on_validation_failure(self):
+        """If validation fails on the tempfile, os.replace is never
+        called and the target path must not exist."""
+        original_validate = validate_memory.validate
+        try:
+            validate_memory.validate = lambda path: [
+                "forced validation failure for atomic-write test"
+            ]
+            rc, _, err = run([
+                "--content", "A perfectly fine durable preference body line.",
+                "--type", "user_preference",
+                "--library", str(self.lib),
+            ])
+        finally:
+            validate_memory.validate = original_validate
+        self.assertEqual(rc, 1)
+        self.assertIn("forced validation failure", err)
+        # No file landed anywhere in the library tree.
+        self.assertEqual(list(self.lib.rglob("*.md")), [])
+
 
 if __name__ == "__main__":
     unittest.main()

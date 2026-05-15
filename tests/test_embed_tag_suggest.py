@@ -96,20 +96,20 @@ class TestMain(unittest.TestCase):
         self.assertEqual(rc, 0, msg=err)
         self.assertIn("docker", out)
 
-    def test_ollama_down_is_graceful(self):
+    def test_embedder_down_is_graceful(self):
         write_jsonl(self.lib, [
             {"id": "mem_a", "type": "decision", "tags": ["docker"], "vector": [1.0]},
         ])
         import embed_memory
 
         def boom(text: str):
-            raise embed_memory.OllamaUnavailable("down (test)")
+            raise embed_memory.EmbedUnavailable("down (test)")
 
         rc, out, err = run(
             ["--text", "anything", "--library", str(self.lib)],
             boom,
         )
-        self.assertEqual(rc, 0, msg="Ollama down must not fail the caller")
+        self.assertEqual(rc, 0, msg="embedder down must not fail the caller")
         self.assertIn("unavailable", (out + err).lower())
 
     def test_json_output_parseable(self):

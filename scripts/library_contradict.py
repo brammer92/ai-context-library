@@ -42,7 +42,7 @@ from pathlib import Path
 import common
 import embed_memory
 import embed_query
-from embed_memory import OllamaUnavailable
+from embed_memory import EmbedUnavailable
 
 DEFAULT_HIGH = 0.92
 DEFAULT_LOW = 0.82
@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None, judge_fn=None) -> int:
     parser.add_argument("--judge", action="store_true",
                         help="Run the Anthropic LLM judge (needs ANTHROPIC_API_KEY).")
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
-    parser.add_argument("--ollama-host", default=embed_memory.DEFAULT_OLLAMA_HOST)
+    parser.add_argument("--voyage-url", default=embed_memory.DEFAULT_VOYAGE_URL)
     parser.add_argument("--model", default=embed_memory.DEFAULT_MODEL)
     parser.add_argument("--json", action="store_true", help="Emit candidates as JSON.")
     args = parser.parse_args(argv)
@@ -200,8 +200,13 @@ def main(argv: list[str] | None = None, *, embed_fn=None, judge_fn=None) -> int:
         query_text = args.text
 
     if embed_fn is None:
+        voyage_key = os.environ.get("VOYAGE_API_KEY", "")
+
         def embed_fn(text: str) -> list[float]:  # noqa: E306
-            return embed_memory._ollama_embed(text, model=args.model, host=args.ollama_host)
+            return embed_memory._voyage_embed(
+                text, key=voyage_key, model=args.model,
+                base_url=args.voyage_url, input_type="query",
+            )
 
     # Default judge: only wire the real one when explicitly asked AND a key exists.
     if judge_fn is None and args.judge:
@@ -212,7 +217,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None, judge_fn=None) -> int:
 
     try:
         vector = embed_fn(query_text)
-    except OllamaUnavailable as exc:
+    except EmbedUnavailable as exc:
         print(
             f"note: contradiction check unavailable — {exc}. The caller should "
             f"treat the contradiction field as UNAVAILABLE and proceed.",

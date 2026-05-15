@@ -29,12 +29,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
 import common
 import embed_memory
-from embed_memory import OllamaUnavailable
+from embed_memory import EmbedUnavailable
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -108,8 +109,8 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
                         help="Library root. Defaults to $AI_CONTEXT_LIBRARY_PATH or cwd.")
     parser.add_argument("--k", type=int, default=5, help="Number of neighbours to return.")
     parser.add_argument("--exclude", default=None, help="Memory id to exclude from results.")
-    parser.add_argument("--ollama-host", default=embed_memory.DEFAULT_OLLAMA_HOST,
-                        help="Ollama base URL.")
+    parser.add_argument("--voyage-url", default=embed_memory.DEFAULT_VOYAGE_URL,
+                        help="Voyage AI base URL.")
     parser.add_argument("--model", default=embed_memory.DEFAULT_MODEL, help="Embedding model.")
     parser.add_argument("--json", action="store_true", help="Emit results as JSON.")
     args = parser.parse_args(argv)
@@ -138,12 +139,17 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
         query_text = args.text
 
     if embed_fn is None:
+        voyage_key = os.environ.get("VOYAGE_API_KEY", "")
+
         def embed_fn(text: str) -> list[float]:  # noqa: E306
-            return embed_memory._ollama_embed(text, model=args.model, host=args.ollama_host)
+            return embed_memory._voyage_embed(
+                text, key=voyage_key, model=args.model,
+                base_url=args.voyage_url, input_type="query",
+            )
 
     try:
         vector = embed_fn(query_text)
-    except OllamaUnavailable as exc:
+    except EmbedUnavailable as exc:
         print(
             f"note: cannot run a similarity query — {exc}. The caller should "
             f"treat dedup as UNAVAILABLE and proceed.",

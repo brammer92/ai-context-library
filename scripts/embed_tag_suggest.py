@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -30,7 +31,7 @@ from pathlib import Path
 import common
 import embed_memory
 import embed_query
-from embed_memory import OllamaUnavailable
+from embed_memory import EmbedUnavailable
 
 
 def suggest_tags(
@@ -72,7 +73,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
                         help="Maximum tags to suggest.")
     parser.add_argument("--min-count", type=int, default=1,
                         help="Minimum neighbour occurrences for a tag to be suggested.")
-    parser.add_argument("--ollama-host", default=embed_memory.DEFAULT_OLLAMA_HOST)
+    parser.add_argument("--voyage-url", default=embed_memory.DEFAULT_VOYAGE_URL)
     parser.add_argument("--model", default=embed_memory.DEFAULT_MODEL)
     parser.add_argument("--json", action="store_true", help="Emit suggestions as JSON.")
     args = parser.parse_args(argv)
@@ -90,12 +91,17 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
     existing_tags = [t.strip() for t in args.existing.split(",") if t.strip()]
 
     if embed_fn is None:
+        voyage_key = os.environ.get("VOYAGE_API_KEY", "")
+
         def embed_fn(text: str) -> list[float]:  # noqa: E306
-            return embed_memory._ollama_embed(text, model=args.model, host=args.ollama_host)
+            return embed_memory._voyage_embed(
+                text, key=voyage_key, model=args.model,
+                base_url=args.voyage_url, input_type="document",
+            )
 
     try:
         vector = embed_fn(args.text)
-    except OllamaUnavailable as exc:
+    except EmbedUnavailable as exc:
         print(
             f"note: tag assist unavailable — {exc}. The caller should infer "
             f"tags directly and proceed.",

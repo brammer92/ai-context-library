@@ -151,7 +151,7 @@ class TestMain(unittest.TestCase):
         write_jsonl(self.lib, [{"id": "mem_a", "type": "decision", "tags": ["t"], "vector": [1.0]}])
 
         def boom(text):
-            raise embed_memory.OllamaUnavailable("down (test)")
+            raise embed_memory.EmbedUnavailable("down (test)")
 
         rc, out, err = run(
             ["--text", "x", "--library", str(self.lib)], boom,

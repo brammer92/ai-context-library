@@ -3,9 +3,9 @@
 
 When a memory is being drafted, the most consistent tags are usually the
 ones already used by the most similar existing memories. This script
-embeds the draft text, finds its nearest neighbours (via embed_query —
-ClickHouse with a local-JSONL fallback), and ranks the neighbours' tags
-by frequency.
+embeds the draft text, finds its nearest neighbours (via embed_query's
+brute-force cosine over the JSONL artifact), and ranks the neighbours'
+tags by frequency.
 
 It is rules + nearest-neighbour, NOT a trained classifier: deterministic
 given the neighbour set, and fully testable without a backend. It only
@@ -30,7 +30,6 @@ from pathlib import Path
 import common
 import embed_memory
 import embed_query
-from embed_load_clickhouse import DEFAULT_CLICKHOUSE_URL, DEFAULT_TABLE
 from embed_memory import OllamaUnavailable
 
 
@@ -73,8 +72,6 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
                         help="Maximum tags to suggest.")
     parser.add_argument("--min-count", type=int, default=1,
                         help="Minimum neighbour occurrences for a tag to be suggested.")
-    parser.add_argument("--clickhouse-url", default=DEFAULT_CLICKHOUSE_URL)
-    parser.add_argument("--table", default=DEFAULT_TABLE)
     parser.add_argument("--ollama-host", default=embed_memory.DEFAULT_OLLAMA_HOST)
     parser.add_argument("--model", default=embed_memory.DEFAULT_MODEL)
     parser.add_argument("--json", action="store_true", help="Emit suggestions as JSON.")
@@ -108,10 +105,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
             print("[]")
         return 0
 
-    hits, source = embed_query.nearest(
-        vector, library, k=args.k, exclude_id=None,
-        clickhouse_url=args.clickhouse_url, table=args.table,
-    )
+    hits = embed_query.nearest(vector, library, k=args.k, exclude_id=None)
     suggestions = suggest_tags(
         hits, existing_tags=existing_tags,
         max_suggestions=args.max_suggestions, min_count=args.min_count,
@@ -126,7 +120,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
               "are already on the draft).")
         return 0
 
-    print(f"suggested tags (from {len(hits)} neighbours, source: {source}):")
+    print(f"suggested tags (from {len(hits)} neighbours):")
     for s in suggestions:
         print(f"  {s['tag']}  ({s['count']} neighbour(s))")
     return 0

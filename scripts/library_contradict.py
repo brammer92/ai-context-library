@@ -42,7 +42,6 @@ from pathlib import Path
 import common
 import embed_memory
 import embed_query
-from embed_load_clickhouse import DEFAULT_CLICKHOUSE_URL, DEFAULT_TABLE
 from embed_memory import OllamaUnavailable
 
 DEFAULT_HIGH = 0.92
@@ -174,8 +173,6 @@ def main(argv: list[str] | None = None, *, embed_fn=None, judge_fn=None) -> int:
     parser.add_argument("--judge", action="store_true",
                         help="Run the Anthropic LLM judge (needs ANTHROPIC_API_KEY).")
     parser.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
-    parser.add_argument("--clickhouse-url", default=DEFAULT_CLICKHOUSE_URL)
-    parser.add_argument("--table", default=DEFAULT_TABLE)
     parser.add_argument("--ollama-host", default=embed_memory.DEFAULT_OLLAMA_HOST)
     parser.add_argument("--model", default=embed_memory.DEFAULT_MODEL)
     parser.add_argument("--json", action="store_true", help="Emit candidates as JSON.")
@@ -225,10 +222,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None, judge_fn=None) -> int:
             print("[]")
         return 0
 
-    hits, source = embed_query.nearest(
-        vector, library, k=args.k, exclude_id=exclude_id,
-        clickhouse_url=args.clickhouse_url, table=args.table,
-    )
+    hits = embed_query.nearest(vector, library, k=args.k, exclude_id=exclude_id)
     candidates = find_candidates(hits, high=args.high, low=args.low)
     neighbour_texts = _load_memory_bodies(library, {c["id"] for c in candidates})
     candidates = judge_candidates(candidates, query_text, neighbour_texts, judge_fn=judge_fn)
@@ -236,10 +230,6 @@ def main(argv: list[str] | None = None, *, embed_fn=None, judge_fn=None) -> int:
     if args.json:
         print(json.dumps(candidates, separators=(",", ":")))
         return 0
-
-    if source == "local":
-        print("note: ClickHouse unavailable; used the local JSONL cosine fallback.",
-              file=sys.stderr)
 
     if not candidates:
         print("contradiction candidates: none "

@@ -2,10 +2,9 @@
 # Embed a memory into the embeddings/ sidecar after it is written.
 #
 # Embeddings layer: every memory write refreshes its vector in the
-# canonical embeddings/memories.jsonl artifact, then syncs the ClickHouse
-# query cache. Both steps degrade gracefully — if Ollama or ClickHouse is
-# unreachable the underlying scripts warn and exit 0, so this hook never
-# blocks a memory write.
+# canonical embeddings/memories.jsonl artifact. Degrades gracefully — if
+# the embedder is unreachable the underlying script warns and exits 0,
+# so this hook never blocks a memory write.
 #
 # Informational only — always exits 0.
 set -euo pipefail
@@ -40,12 +39,8 @@ esac
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 
-# 1. Refresh the canonical JSONL artifact (Ollama). Graceful on failure.
+# Refresh the canonical JSONL artifact. Graceful on failure.
 python3 "${PLUGIN_ROOT}/scripts/embed_memory.py" "${FILE_PATH}" \
-  --library "${LIB}" >/dev/null 2>&1 || true
-
-# 2. Sync the ClickHouse query cache from the JSONL. Graceful on failure.
-python3 "${PLUGIN_ROOT}/scripts/embed_load_clickhouse.py" \
   --library "${LIB}" >/dev/null 2>&1 || true
 
 exit 0

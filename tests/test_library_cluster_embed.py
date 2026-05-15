@@ -97,7 +97,7 @@ class TestMain(unittest.TestCase):
             rec("mem_dup2", [1.0, 0.0, 0.0], ["docker"]),
             rec("mem_uniq", [0.0, 0.0, 1.0], ["vlan"]),
         ])
-        rc, out, err = run([str(self.lib), "--clickhouse-url", "http://127.0.0.1:9"])
+        rc, out, err = run([str(self.lib)])
         self.assertEqual(rc, 0, msg=err)
         self.assertIn("mem_dup1", out)
         self.assertIn("mem_dup2", out)
@@ -106,7 +106,7 @@ class TestMain(unittest.TestCase):
     def test_no_embeddings_falls_back_to_tag_clustering(self):
         # No embeddings/ file at all: must not crash, must note the fallback.
         (self.lib / "memories" / "decisions").mkdir(parents=True)
-        rc, out, err = run([str(self.lib), "--clickhouse-url", "http://127.0.0.1:9"])
+        rc, out, err = run([str(self.lib)])
         self.assertEqual(rc, 0, msg=err)
         self.assertIn("tag", (out + err).lower())  # mentions the tag-clustering fallback
 
@@ -116,7 +116,7 @@ class TestMain(unittest.TestCase):
             rec("mem_b", [0.0, 1.0, 0.0]),
             rec("mem_c", [0.0, 0.0, 1.0]),
         ])
-        rc, out, err = run([str(self.lib), "--clickhouse-url", "http://127.0.0.1:9"])
+        rc, out, err = run([str(self.lib)])
         self.assertEqual(rc, 0, msg=err)
         self.assertIn("none", out.lower())
 
@@ -125,7 +125,7 @@ class TestMain(unittest.TestCase):
             rec("mem_a", [1.0, 0.0]),
             rec("mem_b", [1.0, 0.0]),
         ])
-        rc, out, err = run([str(self.lib), "--json", "--clickhouse-url", "http://127.0.0.1:9"])
+        rc, out, err = run([str(self.lib), "--json"])
         self.assertEqual(rc, 0, msg=err)
         payload = json.loads(out)
         self.assertEqual(len(payload), 1)

@@ -24,7 +24,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import common  # noqa: E402
 import library_contradict as lc  # noqa: E402
 
-DEAD_CH = "http://127.0.0.1:9"
 
 
 def nb(mem_id: str, cos: float) -> dict:
@@ -115,8 +114,7 @@ class TestMain(unittest.TestCase):
             {"id": "mem_far", "type": "fact", "tags": ["x"], "vector": [0.0, 1.0]},
         ])
         rc, out, err = run(
-            ["--text", "we dropped macvlan for syslog", "--library", str(self.lib),
-             "--clickhouse-url", DEAD_CH],
+            ["--text", "we dropped macvlan for syslog", "--library", str(self.lib)],
             embed_fn=lambda t: [1.0, 0.0],
         )
         self.assertEqual(rc, 0, msg=err)
@@ -130,7 +128,7 @@ class TestMain(unittest.TestCase):
             {"id": "mem_existing", "type": "decision", "tags": ["vlan"], "vector": [1.0, 0.0]},
         ])
         rc, out, err = run(
-            ["--text", "dropped macvlan", "--library", str(self.lib), "--clickhouse-url", DEAD_CH],
+            ["--text", "dropped macvlan", "--library", str(self.lib)],
             embed_fn=lambda t: [1.0, 0.0],
             judge_fn=lambda draft, neighbour: "contradicts",
         )
@@ -142,7 +140,7 @@ class TestMain(unittest.TestCase):
             {"id": "mem_far", "type": "fact", "tags": ["x"], "vector": [0.0, 1.0]},
         ])
         rc, out, err = run(
-            ["--text", "unrelated text", "--library", str(self.lib), "--clickhouse-url", DEAD_CH],
+            ["--text", "unrelated text", "--library", str(self.lib)],
             embed_fn=lambda t: [1.0, 0.0],
         )
         self.assertEqual(rc, 0, msg=err)
@@ -156,7 +154,7 @@ class TestMain(unittest.TestCase):
             raise embed_memory.OllamaUnavailable("down (test)")
 
         rc, out, err = run(
-            ["--text", "x", "--library", str(self.lib), "--clickhouse-url", DEAD_CH], boom,
+            ["--text", "x", "--library", str(self.lib)], boom,
         )
         self.assertEqual(rc, 0)
         self.assertIn("unavailable", (out + err).lower())
@@ -167,8 +165,7 @@ class TestMain(unittest.TestCase):
             {"id": "mem_existing", "type": "decision", "tags": ["vlan"], "vector": [1.0, 0.0]},
         ])
         rc, out, err = run(
-            ["--text", "macvlan dropped", "--library", str(self.lib),
-             "--clickhouse-url", DEAD_CH, "--json"],
+            ["--text", "macvlan dropped", "--library", str(self.lib), "--json"],
             embed_fn=lambda t: [1.0, 0.0],
         )
         self.assertEqual(rc, 0, msg=err)
@@ -184,7 +181,7 @@ class TestMain(unittest.TestCase):
             {"id": "mem_other", "type": "decision", "tags": ["net"], "vector": [1.0, 0.0]},
         ])
         rc, out, err = run(
-            ["--memory", "mem_subject", "--library", str(self.lib), "--clickhouse-url", DEAD_CH],
+            ["--memory", "mem_subject", "--library", str(self.lib)],
             embed_fn=lambda t: [1.0, 0.0],
         )
         self.assertEqual(rc, 0, msg=err)

@@ -6,22 +6,22 @@ This is the query helper that backs the dedup step of the
 return the most similar memories so a near-duplicate can be caught
 *before* a proposal reaches the user.
 
-Two query paths, tried in order:
-  1. ClickHouse `library_embeddings` via `cosineDistance` — fast, the
-     normal path.
-  2. Local cosine over `embeddings/memories.jsonl` — the fallback. It
-     means dedup still works with ZERO ClickHouse: slower, but the
-     canonical artifact is always enough.
+It runs brute-force cosine over the canonical
+`embeddings/memories.jsonl` artifact — no external query service. That
+keeps the plugin's only runtime dependencies plain Python + git. At
+single-user, low-hundreds-of-memories scale, brute-force cosine is
+sub-second per query.
 
-Stdlib only. Graceful: if Ollama is unreachable the script cannot embed
-the query, so it prints a note and exits 0 — it never breaks a caller.
+Stdlib only. Graceful: if the embedder is unreachable the script cannot
+embed the query, so it prints a note and exits 0 — it never breaks a
+caller.
 
 Usage:
     python scripts/embed_query.py --text "a durable statement" [--k 5]
     python scripts/embed_query.py --memory mem_20260514_foo [--json]
 
 Exit codes:
-    0  success, or a graceful skip (Ollama down, no embeddings yet)
+    0  success, or a graceful skip (embedder down, no embeddings yet)
     2  bad invocation, or library path not found
 """
 from __future__ import annotations
@@ -30,14 +30,10 @@ import argparse
 import json
 import math
 import sys
-import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 import common
 import embed_memory
-from embed_load_clickhouse import ClickHouseUnavailable, DEFAULT_CLICKHOUSE_URL, DEFAULT_TABLE
 from embed_memory import OllamaUnavailable
 
 
@@ -73,49 +69,17 @@ def query_local_jsonl(
     return hits[:k]
 
 
-def query_clickhouse(
-    vector: list[float], *, url: str, table: str, k: int, exclude_id: str | None,
-) -> list[dict]:
-    """Nearest neighbours via ClickHouse cosineDistance. Raises on failure."""
-    vec_literal = "[" + ",".join(repr(float(x)) for x in vector) + "]"
-    exclude = (exclude_id or "").replace("'", "")
-    sql = (
-        f"SELECT id, type, tags, 1 - cosineDistance(vector, {vec_literal}) AS cos "
-        f"FROM {table} WHERE id != '{exclude}' "
-        f"ORDER BY cos DESC LIMIT {int(k)} FORMAT JSON"
-    )
-    full_url = url.rstrip("/") + "/?" + urllib.parse.urlencode({"query": sql})
-    req = urllib.request.Request(full_url)
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError) as exc:
-        raise ClickHouseUnavailable(f"ClickHouse query failed: {exc}") from exc
-    out = []
-    for row in payload.get("data", []):
-        out.append({
-            "id": row.get("id", ""),
-            "type": row.get("type", ""),
-            "tags": row.get("tags", []) or [],
-            "cos": float(row.get("cos", 0.0)),
-        })
-    return out
-
-
 def nearest(
-    vector: list[float], library: Path, *,
-    k: int, exclude_id: str | None, clickhouse_url: str, table: str,
-) -> tuple[list[dict], str]:
-    """Return (hits, source). Tries ClickHouse, falls back to local JSONL."""
-    try:
-        hits = query_clickhouse(
-            vector, url=clickhouse_url, table=table, k=k, exclude_id=exclude_id,
-        )
-        return hits, "clickhouse"
-    except ClickHouseUnavailable:
-        jsonl_path = library / embed_memory.JSONL_REL
-        hits = query_local_jsonl(vector, jsonl_path, k=k, exclude_id=exclude_id)
-        return hits, "local"
+    vector: list[float], library: Path, *, k: int, exclude_id: str | None,
+) -> list[dict]:
+    """Return top-k nearest memories to ``vector``.
+
+    Brute-force cosine over <library>/embeddings/memories.jsonl. The
+    canonical artifact is the only query path — there is no external
+    cache to fall back from.
+    """
+    jsonl_path = library / embed_memory.JSONL_REL
+    return query_local_jsonl(vector, jsonl_path, k=k, exclude_id=exclude_id)
 
 
 def _find_memory_body(library: Path, mem_id: str) -> tuple[str, str] | None:
@@ -144,10 +108,6 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
                         help="Library root. Defaults to $AI_CONTEXT_LIBRARY_PATH or cwd.")
     parser.add_argument("--k", type=int, default=5, help="Number of neighbours to return.")
     parser.add_argument("--exclude", default=None, help="Memory id to exclude from results.")
-    parser.add_argument("--clickhouse-url", default=DEFAULT_CLICKHOUSE_URL,
-                        help=f"ClickHouse HTTP base URL (default: {DEFAULT_CLICKHOUSE_URL}).")
-    parser.add_argument("--table", default=DEFAULT_TABLE,
-                        help=f"ClickHouse table (default: {DEFAULT_TABLE}).")
     parser.add_argument("--ollama-host", default=embed_memory.DEFAULT_OLLAMA_HOST,
                         help="Ollama base URL.")
     parser.add_argument("--model", default=embed_memory.DEFAULT_MODEL, help="Embedding model.")
@@ -193,13 +153,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
             print("[]")
         return 0
 
-    hits, source = nearest(
-        vector, library, k=args.k, exclude_id=exclude_id,
-        clickhouse_url=args.clickhouse_url, table=args.table,
-    )
-    if source == "local":
-        print("note: ClickHouse unavailable; used the local JSONL cosine fallback.",
-              file=sys.stderr)
+    hits = nearest(vector, library, k=args.k, exclude_id=exclude_id)
 
     if args.json:
         print(json.dumps(hits, separators=(",", ":")))
@@ -209,7 +163,7 @@ def main(argv: list[str] | None = None, *, embed_fn=None) -> int:
         print("no neighbours found (no embeddings generated yet, or empty corpus).")
         return 0
 
-    print(f"nearest {len(hits)} (source: {source}):")
+    print(f"nearest {len(hits)}:")
     for h in hits:
         tags = ",".join(h["tags"])
         print(f"  {h['cos']:.3f}  {h['id']}  [{h['type']}]  {tags}")

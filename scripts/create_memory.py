@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Generate a structured memory file under the AI context library.
 
-Writes to <library>/<MEMORY_TYPE_TO_FOLDER[type]>/<mem_id>.md, then runs
-the memory validator and the secret scanner on the result. If either
-fails, the file is deleted and the script exits non-zero.
+Writes the candidate to a tempfile outside the library tree first, runs
+validation and the secret scanner against the tempfile, and only moves
+it into place via os.replace() once both pass. A failure at either gate
+unlinks the tempfile; nothing fails-but-lands in the library tree, so a
+directory-watching backup/sync can never capture content that didn't
+clear both checks.
 
 Exit codes:
     0  success (file created and validated)
@@ -15,6 +18,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -154,31 +158,39 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: refusing to overwrite existing file: {target}", file=sys.stderr)
         return 1
 
-    target.write_text(serialized, encoding="utf-8")
+    # Write to a tempfile OUTSIDE the library tree so directory-watching
+    # syncs never see content that fails validation or the secret scan.
+    # NamedTemporaryFile defaults to $TMPDIR / /tmp.
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".md", delete=False, encoding="utf-8",
+    ) as tmp:
+        tmp.write(serialized)
+        tmp_path: Path | None = Path(tmp.name)
 
-    # Validate the just-written file.
-    val_errors = validate_memory.validate(target)
-    if val_errors:
-        print(f"INVALID generated memory at {target}:", file=sys.stderr)
-        for e in val_errors:
-            print(f"  - {e}", file=sys.stderr)
-        try:
-            target.unlink()
-        except OSError:
-            pass
-        return 1
+    try:
+        val_errors = validate_memory.validate(tmp_path)
+        if val_errors:
+            print(f"INVALID generated memory (rejected before write):", file=sys.stderr)
+            for e in val_errors:
+                print(f"  - {e}", file=sys.stderr)
+            return 1
 
-    # Scan for secrets.
-    if scan_secrets.main([str(target)]) != 0:
-        print(
-            f"error: secret findings in generated memory; removing {target}",
-            file=sys.stderr,
-        )
-        try:
-            target.unlink()
-        except OSError:
-            pass
-        return 1
+        if scan_secrets.main([str(tmp_path)]) != 0:
+            print(
+                f"error: secret findings in generated memory; not writing to {target}",
+                file=sys.stderr,
+            )
+            return 1
+
+        # Both gates passed — move into place atomically.
+        os.replace(tmp_path, target)
+        tmp_path = None  # ownership transferred to target
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
     print(f"created: {target}")
     print("next: review changes with /library:review, then commit with /library:commit")

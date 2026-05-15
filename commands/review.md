@@ -24,20 +24,33 @@ changed files. **Does not commit.**
 3. For each changed file:
    - If it's under `memories/*.md`, run `validate_memory.py`.
    - If it's under `skills/*/SKILL.md`, run `validate_skill.py`.
-   - Run `scan_secrets.py` on the file.
+   - Run `scan_secrets.py` on the file (BLOCKING gate).
+   - If the file is under `memories/`, `skills/`, `context/`, or is one
+     of the bounded root files (`MEMORY.md`, `USER.md`,
+     `CONSTRAINTS.md`), also run `audit_secrets_llm.py` (ADVISORY,
+     non-blocking — the verdict is surfaced but does not change the
+     commit recommendation).
 4. Summarize:
    - File count (changed / valid / failing / secret findings).
-   - Per-file status with first error line for any failure.
-5. If any failure, print remediation guidance and refuse to recommend
-   commit.
-6. If clean, print the recommended next command: `/library:commit`.
+   - Per-file status with the regex-scan result, the LLM-audit verdict
+     (when run), and the first error line for any failure.
+5. If any validation failure or regex-secret finding, print remediation
+   guidance and refuse to recommend commit.
+6. If clean, print the recommended next command: `/library:commit`. A
+   `suspicious` or `likely_secret` LLM verdict is a warning the user
+   should eyeball — it does NOT block.
 
 ## Safety Rules
 
 - Refuse to recommend commit if validation fails.
-- Refuse to recommend commit if any secret pattern fires.
+- Refuse to recommend commit if any regex secret pattern fires.
 - Refuse to recommend commit if any changed path is outside the allowed
   library subtree.
+- The LLM audit is ADVISORY. It never refuses a commit on its own. The
+  deterministic regex scanner remains the only blocking gate for
+  secrets. An `UNAVAILABLE` verdict means the auditor could not run
+  (missing `ANTHROPIC_API_KEY`, network down) — never fabricated as
+  `clean`.
 
 ## Expected Output
 
@@ -58,10 +71,28 @@ echo "$CHANGED" | sort -u | while IFS= read -r f; do
     skills/*/SKILL.md) python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_skill.py" "$f" || true ;;
   esac
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/scan_secrets.py" "$f" || true
+  case "$f" in
+    memories/*|skills/*|context/*|MEMORY.md|USER.md|CONSTRAINTS.md)
+      python3 "${CLAUDE_PLUGIN_ROOT}/scripts/audit_secrets_llm.py" --file "$f" || true
+      ;;
+  esac
 done
 ```
 
 After running, summarize the results to the user in a short status block.
+Per-file lines should look like:
+
+```
+file: memories/security/mem_20260515_foo.md
+  regex scan:  clean
+  llm audit:   suspicious — eyeball before committing
+file: memories/projects/mem_20260515_bar.md
+  regex scan:  clean
+  llm audit:   clean
+file: skills/x/SKILL.md
+  regex scan:  clean
+  llm audit:   UNAVAILABLE (set ANTHROPIC_API_KEY or skip)
+```
 
 ## Safety Reminder
 

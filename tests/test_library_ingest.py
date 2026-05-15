@@ -90,6 +90,33 @@ class TestLibraryIngest(unittest.TestCase):
         self.assertIn("would copy", out)
         self.assertEqual(list((self.lib / "sources").glob("*.md")), [])
 
+    def test_secret_content_never_lands_in_library(self):
+        """The copy goes to a tempfile in /tmp, gets scanned there, and
+        only os.replace's into <library>/sources/ on a clean scan. On a
+        positive finding, nothing must land anywhere under the library
+        tree."""
+        bad = self.lib.parent / "bad-atomic.md"
+        bad.write_text(
+            "# Bad source\n\napi_key = ghp_" + "a" * 30 + "bbbb\n",
+            encoding="utf-8",
+        )
+        try:
+            rc, _, _ = self._run([
+                "--source", str(bad),
+                "--library", str(self.lib),
+            ])
+            self.assertEqual(rc, 1)
+            # Atomic write: rglob across the whole library tree, not
+            # just sources/. Anything anywhere is a failure.
+            stray = [
+                p for p in self.lib.rglob("*")
+                if p.is_file() and "bad-atomic" in p.name
+            ]
+            self.assertEqual(stray, [])
+            self.assertEqual(list((self.lib / "sources").iterdir()), [])
+        finally:
+            bad.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()

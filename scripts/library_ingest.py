@@ -15,8 +15,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,16 +72,29 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: refusing to overwrite existing source: {dest}", file=sys.stderr)
         return 1
 
-    shutil.copy2(source, dest)
+    # Copy to a tempfile OUTSIDE the library tree so directory-watching
+    # syncs never see content that fails the secret scan.
+    tmp_fd, tmp_name = tempfile.mkstemp(suffix=dest.suffix)
+    os.close(tmp_fd)
+    tmp_path: Path | None = Path(tmp_name)
+    shutil.copy2(source, tmp_path)
 
-    # Scan the copied source for secrets before logging — if findings, remove and fail.
-    if scan_secrets.main([str(dest)]) != 0:
-        print(f"error: secret findings in source; removing {dest}", file=sys.stderr)
-        try:
-            dest.unlink()
-        except OSError:
-            pass
-        return 1
+    try:
+        if scan_secrets.main([str(tmp_path)]) != 0:
+            print(
+                f"error: secret findings in source; not writing to {dest}",
+                file=sys.stderr,
+            )
+            return 1
+
+        os.replace(tmp_path, dest)
+        tmp_path = None
+    finally:
+        if tmp_path is not None and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
     title = args.title or source.stem
     library_log.append(library, "ingest", title, detail=f"sources/{dest_name}", when=now)

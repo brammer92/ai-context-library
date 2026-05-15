@@ -21,7 +21,7 @@ case "${FILE_PATH}" in
 esac
 
 case "${REL}" in
-  memories/*|skills/*|context/*|prompts/*|templates/*|schemas/*|README.md|CLAUDE.md|AGENTS.md|CHATGPT.md) ;;
+  memories/*|skills/*|context/*|prompts/*|templates/*|schemas/*|embeddings/*|README.md|CLAUDE.md|AGENTS.md|CHATGPT.md) ;;
   *) exit 0 ;;
 esac
 

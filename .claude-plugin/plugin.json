@@ -1,7 +1,7 @@
 {
   "name": "library",
   "description": "Safely write validated memories, reusable skills, and durable context into a private GitHub-based AI context library shared across Claude Code, Claude web UI, and ChatGPT.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "Bram Verschuren"
   },

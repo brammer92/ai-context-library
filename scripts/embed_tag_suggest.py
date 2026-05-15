@@ -16,7 +16,7 @@ Usage:
     python scripts/embed_tag_suggest.py --text "draft body" [--existing a,b]
 
 Exit codes:
-    0  success, or a graceful skip (Ollama down)
+    0  success, or a graceful skip (embedder unavailable)
     2  bad invocation, or library path not found
 """
 from __future__ import annotations

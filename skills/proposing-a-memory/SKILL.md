@@ -29,8 +29,9 @@ want detecting-durable-context instead.
 - scripts/embed_query.py for nearest-neighbour lookup,
   scripts/embed_tag_suggest.py for tag assist, and the
   checking-for-contradictions skill (scripts/library_contradict.py) for
-  the contradiction check. All ClickHouse-with-local-JSONL-fallback —
-  treat as best-effort; absence must not block the proposal.
+  the contradiction check. All run brute-force cosine over the local
+  JSONL — treat as best-effort; absence (no Voyage key, no JSONL yet)
+  must not block the proposal.
 
 ## Procedure
 1. Secret pre-scan: reject the draft outright if the title or body
@@ -40,12 +41,13 @@ want detecting-durable-context instead.
    the user to restate rather than proposing a stub.
 3. Duplicate check: run
    `python3 scripts/embed_query.py --text "<draft body>" --library <lib>`
-   (it embeds the draft and returns nearest neighbours — ClickHouse if
-   up, the local JSONL cosine fallback otherwise).
+   (it embeds the draft via Voyage AI and returns nearest neighbours by
+   brute-force cosine over the local JSONL).
    - cosine >= 0.92 -> switch to proposing an UPDATE to that memory.
    - 0.85-0.92 -> include the near-match in the proposal as context.
-   - If Ollama is down the script exits 0 with a note and no results ->
-     mark dedup "UNAVAILABLE".
+   - If the embedder is unreachable (no `VOYAGE_API_KEY`, network down)
+     the script exits 0 with a note and no results -> mark dedup
+     "UNAVAILABLE".
 4. Auto-tag assist: run
    `python3 scripts/embed_tag_suggest.py --text "<draft body>" --existing "<draft tags>" --library <lib>`
    and fold any sensible suggestions into the draft's tags. Skip
@@ -84,9 +86,9 @@ want detecting-durable-context instead.
 - One proposal per invocation.
 
 ## Failure Modes
-- ClickHouse/Ollama down -> dedup and auto-tag degrade to UNAVAILABLE;
-  the proposal is still emitted and the user can run /library:lint
-  later.
+- Voyage AI unreachable or `VOYAGE_API_KEY` unset -> dedup and
+  auto-tag degrade to UNAVAILABLE; the proposal is still emitted and
+  the user can run /library:lint later.
 - Contradiction backend down -> contradiction field is UNAVAILABLE; the
   proposal proceeds.
 - Draft fails useful-content -> no proposal; ask the user to restate.

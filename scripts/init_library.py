@@ -350,10 +350,11 @@ contradiction-checked corpus for all three agents.
 
 ## Sync model
 
-`memories.jsonl` is canonical. ClickHouse (`library_embeddings`) is a
-rebuildable query cache populated by `scripts/embed_load_clickhouse.py`.
-`content_hash` lets consumers detect a stale vector and degrade rather
-than return a bad neighbour.
+`memories.jsonl` is canonical and the only query path: `scripts/
+embed_query.py` runs brute-force cosine over it directly. `content_hash`
+lets consumers detect a stale vector and degrade rather than return a
+bad neighbour; a model change in the JSONL record triggers a re-embed
+on the next backfill so a backend swap auto-migrates.
 """
 
 CONTEXT_FILES: dict[str, str] = {

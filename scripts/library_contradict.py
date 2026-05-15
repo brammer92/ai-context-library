@@ -26,7 +26,7 @@ Usage:
     python scripts/library_contradict.py --memory mem_x [--json]
 
 Exit codes:
-    0  success, or a graceful skip (Ollama down)
+    0  success, or a graceful skip (embedder unavailable)
     2  bad invocation, or library path not found
 """
 from __future__ import annotations

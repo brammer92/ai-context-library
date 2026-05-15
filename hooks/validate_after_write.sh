@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Validate writes that land under the AI context library subtree.
 #
-# Despite its name, this hook runs at PostToolUse — "pre" here means
-# pre-commit, not pre-write. It exits non-zero so Claude surfaces the
-# validation error to the user.
+# Runs at PostToolUse on Write|Edit. Exits non-zero if the just-written
+# file fails memory/skill validation or the secret scan, so Claude
+# surfaces the error to the user before /library:review is attempted.
 set -euo pipefail
 
 # Read tool input from stdin.

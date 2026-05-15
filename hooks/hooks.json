@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre_write_validate.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/validate_after_write.sh"
           },
           {
             "type": "command",

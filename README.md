@@ -320,7 +320,8 @@ Claude Code convention.
 | `VOYAGE_API_KEY` | _(unset)_ | Required for embeddings. Unset → embedding hooks exit 0 with a warning; the rest of the pipeline runs unaffected. |
 | `LIBRARY_EMBED_MODEL` | `voyage-3.5` | Voyage embedding model. Examples: `voyage-3.5-lite` (lower cost), `voyage-4-large` (higher quality). |
 | `VOYAGE_BASE_URL` | `https://api.voyageai.com` | Voyage API base URL (override only if proxying). |
-| `ANTHROPIC_API_KEY` | _(unset)_ | Optional. When set with `library_contradict.py --judge`, runs the Haiku LLM judge over contradiction candidates. Unset → verdicts are `UNAVAILABLE`. |
+| `ANTHROPIC_API_KEY` | _(unset)_ | Optional. When set with `library_contradict.py --judge`, runs the Haiku LLM judge over contradiction candidates. Also used by `audit_secrets_llm.py` (the advisory secret auditor wired into `/library:review`). Unset → verdicts are `UNAVAILABLE`. |
+| `LIBRARY_AUDIT_MODEL` | `claude-haiku-4-5-20251001` | Anthropic model for the advisory secret auditor in `audit_secrets_llm.py`. |
 
 Defaults are safe: no auto-commit, no auto-push, validation required,
 secret scanning required, human review required. The embeddings layer is
@@ -387,8 +388,9 @@ Existing files are never overwritten.
 | `/library:init` | Create missing folders/starter files in the library. Never overwrites. |
 | `/library:add-memory <text>` | Generate, validate, scan, and write a structured memory file. |
 | `/library:add-skill <description>` | Generate a skill folder (SKILL.md + examples.md + validation.md). |
-| `/library:review` | Validate + secret-scan every pending change. |
-| `/library:commit` | Commit reviewed changes. Refuses if validation or scan fails. |
+| `/library:review` | Validate + secret-scan every pending change. Also runs the advisory LLM secret auditor (informational only). |
+| `/library:audit` | Run the advisory LLM secret auditor over pending changes. Advisory only — never blocks a commit. |
+| `/library:commit` | Commit reviewed changes. Refuses if validation or the regex secret scan fails. |
 | `/library:sync` | `git pull --ff-only` and re-validate. Aborts if dirty. |
 | `/library:status` | Print branch, pending changes, counts, validation, cap usage, and findings. |
 
@@ -584,8 +586,20 @@ Applied to `MEMORY.md`, `USER.md`, and `CONSTRAINTS.md`.
 ## How secret scanning works
 
 [`scripts/scan_secrets.py`](scripts/scan_secrets.py) walks a file or
-directory, skipping `.git/`, `node_modules/`, `.venv/`, `__pycache__/`,
-binary files, and `.env.example`/`.env.sample`/`.env.template`.
+directory, skipping these directories:
+
+- `.git/`, `node_modules/`, `__pycache__/`
+- `.venv/`, `venv/`
+- `.pytest_cache/`, `.mypy_cache/`
+- `dist/`, `build/`
+- `tests/` — for the plugin's own repo, where test fixtures contain
+  fake-shaped credentials on purpose. **User libraries should not
+  contain a top-level `tests/`**; if you put real content there it
+  will be silently un-scanned. The library convention puts everything
+  under `memories/`, `skills/`, `context/`, etc., never `tests/`.
+
+It also skips binary files and `.env.example` / `.env.sample` /
+`.env.template`.
 
 Patterns flagged:
 
@@ -603,6 +617,38 @@ Patterns flagged:
 Findings print as `path:line:pattern_name: <redacted>`. The redaction
 preserves the first 3 and last 4 characters; the middle is replaced with
 at least four asterisks. The full secret never appears in output.
+
+The scanner is the **only blocking secret gate** in the pipeline.
+`create_memory.py` and `library_ingest.py` write to a tempfile in
+`$TMPDIR` first, run the scan against the tempfile, and only
+`os.replace()` into the library tree once the scan is clean — so failed
+content never lands under the watched library subtree.
+
+---
+
+## LLM secret auditor (advisory)
+
+[`scripts/audit_secrets_llm.py`](scripts/audit_secrets_llm.py) is a
+defense-in-depth advisory layer on top of the regex scanner. It asks
+Anthropic Haiku to classify a file as `clean`, `suspicious`,
+`likely_secret`, or `UNAVAILABLE`. It is wired into `/library:review`
+and exposed standalone as `/library:audit`.
+
+- **Advisory only.** The auditor never blocks a write or a commit on
+  its own. The regex scanner remains the only gate. A `suspicious` or
+  `likely_secret` verdict surfaces to the user; the user decides.
+- **Honest non-answers.** Missing `ANTHROPIC_API_KEY`, network failure,
+  or a garbled judge response → verdict is `UNAVAILABLE`. Never
+  fabricates `clean`.
+- **Prompt-injection hardening.** Content under audit is wrapped in
+  `<<<CONTENT>>>...<<<END>>>` markers and the prompt frames it as data
+  to inspect, not instructions to follow. Standard hardening, not
+  bulletproof.
+- **Stdlib only.** A single `urllib` POST to
+  `https://api.anthropic.com/v1/messages`. No extra dependencies.
+- **Cost shape.** One Haiku call per file at `/library:review` time —
+  bounded by deliberate review batches, not per-write. `LIBRARY_AUDIT_MODEL`
+  overrides the model.
 
 ---
 
@@ -631,12 +677,13 @@ at least four asterisks. The full secret never appears in output.
 ```text
 1.  Claude Code identifies durable context.
 2.  User runs /library:add-memory or /library:add-skill.
-3.  Plugin generates structured Markdown.
-4.  Plugin validates the file.
-5.  Plugin scans for secrets.
-6.  Plugin writes to local context library.
+3.  Plugin generates structured Markdown into a tempfile in $TMPDIR.
+4.  Plugin validates the tempfile.
+5.  Plugin scans the tempfile for secrets.
+6.  Plugin os.replace()'s the tempfile into the library tree (atomic;
+    failed content never lands in the watched library subtree).
 7.  Plugin shows the Git diff.
-8.  User runs /library:review.
+8.  User runs /library:review (regex scan + advisory LLM audit).
 9.  User approves changes.
 10. User runs /library:commit.
 11. User manually pushes to GitHub.
